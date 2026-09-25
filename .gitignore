@@ -28,6 +28,8 @@ data/
 fixtures/
 # README 与 CLI 示例中的默认简历目录；真实简历含个人信息，同样不得入库
 resumes/
+# 岗位 JD 属内部业务资料，默认不入库；若要共享示例 JD，用 git add -f 显式加入
+jd/
 *.xlsx
 
 # Node.js

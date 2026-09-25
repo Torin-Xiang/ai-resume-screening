@@ -24,7 +24,7 @@ def screen(
     out: Path = typer.Option(None, "--out", help="导出的 Excel 路径"),
     cache_dir: Path = typer.Option(Path("data/cache"), "--cache-dir", help="解析/提取缓存目录"),
     run_dir: Path = typer.Option(Path("data/runs"), "--run-dir", help="运行结果保存目录"),
-    provider: str = typer.Option("qwen", "--provider", help="模型 provider：qwen / fake"),
+    provider: str | None = typer.Option(None, "--provider", help="模型 provider：qwen / fake（默认读 LLM_PROVIDER）"),
     model: str = typer.Option(None, "--model", help="模型名，如 qwen-plus"),
     limit: int = typer.Option(None, "--limit", help="只处理前 N 份（调试用）"),
     no_cache: bool = typer.Option(False, "--no-cache", help="忽略缓存，强制重新解析提取"),

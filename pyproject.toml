@@ -32,3 +32,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
 filterwarnings = ["ignore::DeprecationWarning"]
+# 保留 pytest 临时目录，避免自动清理旧的临时文件（本机 temp 目录批量删除有风险）
+tmp_path_retention_count = 10000
+tmp_path_retention_policy = "all"

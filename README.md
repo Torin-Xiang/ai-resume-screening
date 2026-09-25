@@ -116,7 +116,7 @@ resume-screen screen --rubric rubrics/ai-engineer-v2.json --input resumes/
 ## 开发
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q     # 97 passed
+.venv/Scripts/python.exe -m pytest -q     # 101 passed
 ```
 
 分层约定（改动前请读）：CLI 薄壳 → `core`（纯逻辑，不认识 CLI、不依赖具体 SDK）→

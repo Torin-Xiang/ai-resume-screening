@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "version": "2026-09-26-ai-must",
+  "job_title": "AI 应用开发工程师",
+  "jd_summary": "负责 RAG 与 Agent 应用落地",
+  "hard_filters": [
+    {
+      "id": "min_degree",
+      "name": "本科及以上",
+      "definition": "最高学历须为本科及以上（以简历中明确写出的学历层次为准）。",
+      "positive_examples": ["本科", "硕士", "博士"],
+      "negative_examples": ["大专", "专科"],
+      "kind": "hard_filter",
+      "rule": "min_degree",
+      "params": { "min_level": "本科" }
+    },
+    {
+      "id": "min_years",
+      "name": "3 年以上工作经验",
+      "definition": "全职工作年限不低于 3 年（按工作经历时间跨度计算）。",
+      "positive_examples": ["2020.07-至今", "工作 5 年"],
+      "negative_examples": ["应届毕业生", "工作 1 年"],
+      "kind": "hard_filter",
+      "rule": "min_years",
+      "params": { "min_years": 3 }
+    },
+    {
+      "id": "ai_exp",
+      "name": "AI 项目经验",
+      "definition": "候选人须在项目中实际参与过 AI 能力的设计或交付，而非仅使用成品工具。做过微调、搭过 RAG/Agent 并上线算；仅调用 API 或课程作业级 demo 不算。",
+      "positive_examples": ["独立训练或微调过模型", "搭建过 RAG 或 Agent 流程并上线"],
+      "negative_examples": ["仅调用 ChatGPT 辅助写作", "课程作业级别的 demo"],
+      "kind": "hard_filter",
+      "rule": null,
+      "params": {}
+    }
+  ],
+  "bonus": [
+    {
+      "id": "bigtech",
+      "name": "大厂经历",
+      "definition": "头部互联网/科技公司全职经历（非外包驻场、非实习）。",
+      "positive_examples": ["头部互联网公司全职 2 年"],
+      "negative_examples": ["外包驻场", "实习"],
+      "kind": "bonus",
+      "weight": 10,
+      "rule": null,
+      "params": {}
+    },
+    {
+      "id": "edu211",
+      "name": "211/985 学历",
+      "definition": "毕业院校属于 211/985 或双一流建设高校。",
+      "positive_examples": ["985 高校本科"],
+      "negative_examples": ["普通二本院校"],
+      "kind": "bonus",
+      "weight": 5,
+      "rule": null,
+      "params": {}
+    }
+  ],
+  "red_flags": [
+    {
+      "id": "job_hop",
+      "name": "平均在职时长 < 1 年",
+      "definition": "各段工作经历的平均在职时长不足 12 个月（跳槽过于频繁）。",
+      "positive_examples": ["一年一换", "半年一跳"],
+      "negative_examples": ["单家公司 3 年"],
+      "kind": "red_flag",
+      "penalty": 8,
+      "rule": "job_hop",
+      "params": { "min_avg_months": 12 }
+    }
+  ],
+  "notes": "示例评分卡：硬门槛里的学历/年限/跳槽走规则判定（100% 可解释），AI 项目经验走 LLM 判定并必须给出原文证据。请按实际 JD 调整口径与权重。"
+}

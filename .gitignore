@@ -4,6 +4,8 @@
 # 环境变量与密钥
 .env
 .env.*
+# 模板可入库，真实 .env 永不入库
+!.env.example
 *.local
 
 # Python

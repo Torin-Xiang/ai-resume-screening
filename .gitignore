@@ -1,0 +1,42 @@
+# 工作记忆目录（本机 Agent 运行时数据，非项目内容）
+.workbuddy/
+
+# 环境变量与密钥
+.env
+.env.*
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node.js
+node_modules/
+dist/
+build/
+*.log
+
+# Office / WPS 临时文件（编辑简历、JD 文档时会产生）
+~$*.doc
+~$*.docx
+~$*.xls
+~$*.xlsx
+~$*.ppt
+~$*.pptx
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

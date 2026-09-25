@@ -13,12 +13,14 @@ import typer
 
 from resume_screening import __version__
 from resume_screening.cli.rubric_cmd import rubric_app
+from resume_screening.cli.screen_cmd import register as register_screen
 
 app = typer.Typer(
     add_completion=False,
     help="AI 简历初筛 MVP：PDF 解析 → 结构化提取 → 评分卡 → 双层评估 → Excel 导出与复核",
 )
 app.add_typer(rubric_app, name="rubric")
+register_screen(app)
 
 
 @app.command()
@@ -27,5 +29,12 @@ def version() -> None:
     typer.echo(f"resume-screening {__version__}")
 
 
-if __name__ == "__main__":  # pragma: no cover
+def main() -> None:  # pragma: no cover
+    from dotenv import load_dotenv
+
+    load_dotenv()  # 读取 .env 中的 DASHSCOPE_API_KEY
     app()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

@@ -220,6 +220,8 @@ class CandidateResult(BaseModel):
     file_name: str
     source_path: str
     verdict: ScreeningVerdict
+    candidate_name: str = Field("", description="候选人姓名（可选字段，向后兼容）")
+    candidate_contact: str = Field("", description="联系方式（可选字段，向后兼容）")
     score: float = 0.0
     max_score: float = 0.0
     dimensions: list[DimensionResult] = Field(default_factory=list)

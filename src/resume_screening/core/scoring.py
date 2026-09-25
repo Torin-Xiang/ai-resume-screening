@@ -114,6 +114,8 @@ def evaluate_candidate(
         verdict=ScreeningVerdict.NEEDS_REVIEW,
         max_score=rubric.max_possible_score(),
         parse_status=doc.parse_quality.status,
+        candidate_name=str(doc.fields.name.value or "") if doc.fields.name.is_known else "",
+        candidate_contact=str(doc.fields.contact.value or "") if doc.fields.contact.is_known else "",
     )
 
     # 解析质量不达标 → 不评估，直接待人工（方案 §9）

@@ -26,6 +26,8 @@ htmlcov/
 # 方案 §9：脱敏简历样本与个人信息不得进 Git
 data/
 fixtures/
+# README 与 CLI 示例中的默认简历目录；真实简历含个人信息，同样不得入库
+resumes/
 *.xlsx
 
 # Node.js

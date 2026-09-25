@@ -20,6 +20,12 @@ env/
 coverage.xml
 htmlcov/
 
+# 运行产物（解析缓存 / 导出结果）与本地素材
+# 方案 §9：脱敏简历样本与个人信息不得进 Git
+data/
+fixtures/
+*.xlsx
+
 # Node.js
 node_modules/
 dist/

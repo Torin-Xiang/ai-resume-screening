@@ -30,7 +30,7 @@ class QwenClient:
         *,
         api_key: str | None = None,
         model: str = DEFAULT_MODEL,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str | None = None,
         max_retries: int = 3,
         timeout: float = 60.0,
     ) -> None:
@@ -47,7 +47,7 @@ class QwenClient:
             )
         self.model = model
         self._max_retries = max_retries
-        self._client = OpenAI(api_key=key, base_url=base_url, timeout=timeout)
+        self._client = OpenAI(api_key=key, base_url=base_url or DEFAULT_BASE_URL, timeout=timeout)
 
     @retry(
         retry=retry_if_exception_type(Exception),

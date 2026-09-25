@@ -12,11 +12,13 @@ from __future__ import annotations
 import typer
 
 from resume_screening import __version__
+from resume_screening.cli.rubric_cmd import rubric_app
 
 app = typer.Typer(
     add_completion=False,
     help="AI 简历初筛 MVP：PDF 解析 → 结构化提取 → 评分卡 → 双层评估 → Excel 导出与复核",
 )
+app.add_typer(rubric_app, name="rubric")
 
 
 @app.command()

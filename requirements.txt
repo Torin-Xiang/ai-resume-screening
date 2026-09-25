@@ -1,0 +1,10 @@
+# AI 简历初筛 MVP —— 运行依赖（与 docs/产品方案.md §7 技术栈一致）
+pymupdf>=1.25            # PDF 解析，提供坐标块用于分栏重排
+pydantic>=2.7            # 数据结构定义与 LLM 输出校验
+typer>=0.12              # CLI 薄壳
+openpyxl>=3.1            # Excel 导出（样式/列宽/冻结首行）
+pandas>=2.2              # 方案 §7 列出的辅助依赖（表格整理）
+openai>=1.40             # 走 DashScope OpenAI 兼容端点调用 qwen
+python-dotenv>=1.0       # 读取 .env 中的 DASHSCOPE_API_KEY
+tenacity>=9.0            # LLM 调用重试
+pytest>=8.0              # 测试

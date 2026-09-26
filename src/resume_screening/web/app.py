@@ -131,6 +131,17 @@ def create_app(
     app.include_router(events_routes.router)
     app.include_router(settings_routes.router)
 
+    @app.middleware("http")
+    async def no_cache_html(request, call_next):
+        """HTML 永远不缓存。前端 JS/CSS 带 hash 可以长缓存，但 index.html
+        若被浏览器缓存，发版后用户看到的还是旧页面（改了功能"没有任何变化"），
+        且强刷之外无解——这不是用户该踩的坑。
+        """
+        response = await call_next(request)
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     # 前端静态资源放在最后挂载，避免拦截 /api 路由
     if UI_DIST.is_dir():
         app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")

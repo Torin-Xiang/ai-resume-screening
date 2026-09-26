@@ -107,6 +107,13 @@ def test_switch_rejects_unknown_provider(client):
     assert resp.status_code == 400
 
 
+def test_html_responses_are_never_cached(client):
+    """回归：index.html 被浏览器缓存会让用户在发版后看到旧页面（实测踩过）。"""
+    test_client, _ = client
+    resp = test_client.get("/")
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
 def test_saved_choice_is_used_on_restart(tmp_path, monkeypatch):
     """重启后（不注入替身）应用上次的选择，而不是悄悄退回 .env 默认。"""
     llm_settings.save_choice(tmp_path, provider="scripted", model="scripted-1")

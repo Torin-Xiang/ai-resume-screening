@@ -42,9 +42,15 @@ _CJK_LINE = re.compile(r"^[\u4e00-\u9fa5]{2,4}$")
 _EXPERIENCE_HEADINGS = ("实习经历", "工作经历", "工作经验", "职业经历")
 _TITLE_HINT = re.compile(r"(实习生|产品经理|工程师|助理|专员|组长|设计师|分析师)")
 
-#: 招聘平台导出 PDF 的水印：一长串无中文、无空格的编码。它会被塞进正文，
-#: 甚至出现在姓名之前，按"前几行找短中文行"取姓名时必须先剔掉。
+#: 招聘平台导出 PDF 的水印：一长串无空格、无标点的编码（Base64URL 风格）。
+#: 它会被塞进正文，甚至出现在姓名之前，按"前几行找短中文行"取姓名时必须先剔掉。
+#:
+#: 判据必须是**正向特征**（整行只由 ASCII 字母数字与 `-_` 组成），不能写成"不含汉字"：
+#: 中文全角标点（`：、；（）`）不在 `\u4e00-\u9fff` 范围内，于是
+#: 「AI / LLM：Prompt、Workflow、RAG」这类纯英文技能行会被判成水印**整行删掉**，
+#: 技能就整行进不去——实测踩到过。
 _NOISE_MIN_LEN = 20
+_NOISE_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 #: 学历关键词，按"高→低"排列，取命中的最高层次
 _DEGREES = ("博士", "硕士", "研究生", "本科", "学士", "大专", "专科")
@@ -53,10 +59,35 @@ _DEGREE_ALIAS = {"研究生": "硕士", "学士": "本科", "专科": "大专"}
 #: 识别城市用（脚本模型不做地理推断，只认显式出现的地名）
 _CITY_HINTS = ("北京", "上海", "杭州", "深圳", "广州", "成都", "南京", "武汉", "西安", "苏州")
 
+#: 院校名只取「XX大学 / XX学院」本身。同一行常挂着后缀——
+#: 「南洋理工大学（QS 12）」「西北农林科技大学（985、211、双一流）| 硕士」——
+#: 整行回传会把后缀一起带走，逐字比对时就成了"值不符"，
+#: 看报告的人还得自己分辨是抽错了还是只是多了装饰。
+_SCHOOL_RE = re.compile(r"[\u4e00-\u9fa5]{2,12}(?:大学|学院)")
+
+#: 技能小节标题。求职者怎么写完全不受控：三份真实样本分别用了
+#: 「技能/评价」「专业能力」「个人技能」，只能枚举常见写法。
+_SKILL_HEADINGS = (
+    "技能/评价", "技能评价", "专业技能", "个人技能", "专业能力",
+    "核心技能", "技能特长", "专业技能与证书", "技能证书", "技能",
+)
+#: 技能小节最多往下收几行；再往下多半是别的小节或下一页页脚。
+_SKILL_MAX_LINES = 8
+#: 条目最长多少字符。技能栏要展示的是词/短语；整句式自我评价
+#: （「英语（商务流利），可支持英文产品文档撰写与跨团队沟通。」）不是技能。
+_SKILL_ITEM_MAX = 22
+_SKILL_SPLIT = re.compile(r"[、｜|／/；;]")
+_SKILL_BRACKET = re.compile(r"^【[^】]{1,14}】\s*")
+_SKILL_COLON = re.compile(r"^[^：:]{1,12}[：:]\s*")
+#: 「熟练使用 Python」→「Python」：前缀是描述词，不是技能名本身。
+_SKILL_VERB = re.compile(r"^(?:熟练使用|熟练掌握|熟练运用|熟练|熟悉|掌握|精通|了解)\s*")
+#: PDF 抽出的长句会被硬断行，只有句末标点才算这一行写完了。
+_SKILL_LINE_END = "。；;！!？?"
+
 
 def _is_noise(line: str) -> bool:
     s = line.strip()
-    return len(s) >= _NOISE_MIN_LEN and not re.search(r"[\u4e00-\u9fff]", s)
+    return len(s) >= _NOISE_MIN_LEN and bool(_NOISE_RE.match(s))
 
 
 def _clean_lines(text: str) -> list[str]:
@@ -116,13 +147,50 @@ def _jd_lines(jd: str) -> list[str]:
     return out
 
 
+#: 维度名从整条 JD 条款里压缩而来。**不能机械截断**：`body[:18]` 会把
+#: 「…（如 ChatGPT）…」切成「…（如 ChatGP」、还常在结尾留一个逗号。
+#: 这种名字会被写进评分卡 JSON 长期留存，看起来像数据损坏而不是"简化"。
+_LABEL_LIMIT = 30
+_LABEL_TAIL = "，。、；：,.;:·-— \t"
+_LABEL_CUT_AT = "，。；、： ,;:（）()"
+
+
+def _short_label(body: str, limit: int = _LABEL_LIMIT) -> str:
+    """把一条 JD 条款压成一个可读的维度名。
+
+    先按第一个分句取（条款通常是"能力要求，具体说明"的结构，分句前半就是标签）；
+    仍然超长才截断，且截断点回退到最近的标点/空格，并补省略号**显式标记**被截过，
+    避免读者把"被截断"误当成"原文如此"。
+    """
+    text = body.strip().rstrip(_LABEL_TAIL)
+    if not text:
+        return body[:limit]
+    head = re.split(r"[，。；]", text, maxsplit=1)[0].strip().rstrip(_LABEL_TAIL)
+    if head and len(head) <= limit:
+        return head
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    back = max(cut.rfind(ch) for ch in _LABEL_CUT_AT)
+    if back >= limit // 2:
+        cut = cut[:back]
+    # 截断点可能落在未闭合的括号里（「…（如 ChatGPT」），读起来像原文如此。
+    # 宁可少留几个字，也要让括号成对。
+    for left, right in (("（", "）"), ("(", ")")):
+        if cut.count(left) > cut.count(right):
+            cut = cut[: cut.rfind(left)]
+    return cut.rstrip(_LABEL_TAIL) + "…"
+
+
 def _dim(body: str, *, dim_id: str, kind: str) -> dict[str, Any]:
+    label = _short_label(body)
+    hint = _short_label(body, limit=14)
     return {
         "id": dim_id,
-        "name": body[:18],
+        "name": label,
         "definition": f"{body}（判据照抄 JD 原文，未做任何扩写）",
-        "positive_examples": [f"简历中出现与「{body[:10]}」直接相关的经历描述"],
-        "negative_examples": [f"简历中完全没有与「{body[:10]}」相关的内容"],
+        "positive_examples": [f"简历中出现与「{hint}」直接相关的经历描述"],
+        "negative_examples": [f"简历中完全没有与「{hint}」相关的内容"],
         "kind": kind,
         "rule": None,
         "params": {},
@@ -203,6 +271,47 @@ def _field(value: Any, quote: str | None) -> dict[str, Any]:
     return {"value": value, "status": "extracted", "evidence": {"quote": quote, "page": 1}}
 
 
+def _extract_skills(lines: list[str]) -> list[str] | None:
+    """从「技能 / 专业能力」小节抽成**条目列表**，而不是照搬原句。
+
+    技能栏该展示的是「Dify / Python / RAG」这样的清单；把整段自我评价塞进去，
+    排名页的"技能"一行会被撑爆，也看不出到底会什么。抽不到返回 None
+    （→ `not_mentioned`），不猜——这是本适配器的既定红线。
+    """
+    at = next((i for i, ln in enumerate(lines) if ln.strip() in _SKILL_HEADINGS), None)
+    if at is None:
+        return None
+
+    # 先把 PDF 的硬断行拼回整行。不拼的话「…用户研究、竞」+「品分析、PRD…」
+    # 会被切出一个半截词「品分析」，直接混进技能清单。
+    #
+    # 关键是别拼过头：真实简历里每个条目常常自成一行、且**不以句号结尾**
+    # （「产品能力：需求分析、竞品调研、…」），只看"末尾有没有句号"会把四条
+    # 独立条目粘成一条，切分时整段超长被丢弃，「Python」就这么丢过。
+    # 判据加上"这一行自己带条目标签（`xx：` 或 `【xx】`）"——带标签就是新条目。
+    rows: list[str] = []
+    for cand in lines[at + 1 : at + 1 + _SKILL_MAX_LINES]:
+        s = cand.strip()
+        if s in _SKILL_HEADINGS:
+            break
+        if len(s) < 3:
+            continue
+        starts_new = bool(_SKILL_COLON.match(s) or _SKILL_BRACKET.match(s))
+        if rows and rows[-1][-1] not in _SKILL_LINE_END and not starts_new:
+            rows[-1] += s
+        else:
+            rows.append(s)
+
+    items: list[str] = []
+    for row in rows:
+        for part in _SKILL_SPLIT.split(row):
+            part = _SKILL_COLON.sub("", _SKILL_BRACKET.sub("", part.strip()))
+            part = _SKILL_VERB.sub("", part).strip().rstrip("，。、；：,.;:")
+            if 2 <= len(part) <= _SKILL_ITEM_MAX and part not in items:
+                items.append(part)
+    return items or None
+
+
 def extract_fields_from_text(text: str) -> dict[str, Any]:
     """从原文抽字段。抽不到就 `not_mentioned` —— 这是刻意的，不是缺陷。"""
     lines = _clean_lines(text)
@@ -223,12 +332,28 @@ def extract_fields_from_text(text: str) -> dict[str, Any]:
             education = _DEGREE_ALIAS.get(key, key)
             break
 
-    school = next((ln for ln in lines if "大学" in ln or "学院" in ln), None)
+    # 院校：只取「XX大学 / XX学院」，扔掉同行挂着的后缀（QS 排名、985/211 标注、| 硕士）
+    school_line = next((ln for ln in lines if "大学" in ln or "学院" in ln), None)
+    school = None
+    if school_line is not None:
+        m = _SCHOOL_RE.search(school_line)
+        school = m.group() if m else None
+
+    skills = _extract_skills(lines)
+    skill_quote = None
+    if skills:
+        # 证据行优先取含第一条目的原文行；退而求其次取技能小节标题行，
+        # 保证 evidence 不为空——evidence 为空会让 _field 把已抽到的技能丢掉。
+        skill_quote = _quote_for(text, skills[0]) or next(
+            (ln.strip() for ln in text.splitlines() if ln.strip() in _SKILL_HEADINGS), None
+        )
 
     # 专业：学历所在行去掉学历词与日期后的中文片段；抽不到就承认未提及
     major = None
-    if school is not None:
-        idx = lines.index(school)
+    if school_line is not None:
+        # 用**原始行**定位，不能用清洗后的 school：`lines.index(school)` 会因为
+        # 「南洋理工大学」不在 `南洋理工大学（QS 12）` 这个列表元素里而直接抛异常。
+        idx = lines.index(school_line)
         for cand in lines[idx + 1 : idx + 4]:
             stripped = re.sub(r"(硕士|本科|学士|博士|研究生|大专|专科)", "", cand)
             stripped = re.sub(r"[|\d.\-—/至年月日\s（）()]+", "", stripped)
@@ -266,7 +391,7 @@ def extract_fields_from_text(text: str) -> dict[str, Any]:
             "years_of_experience": _field(None, None),  # 应届生简历不做年限推断
             "current_company": _field(company, company),
             "current_title": _field(title, title),
-            "skills": _field(None, None),
+            "skills": _field(skills, skill_quote),
             "location": _field(location, _quote_for(text, location) if location else None),
         },
         "work_experiences": [],

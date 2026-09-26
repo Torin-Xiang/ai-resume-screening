@@ -39,6 +39,9 @@ build/
 *.log
 *.tsbuildinfo
 
+# 浏览器冒烟截图（每次运行都会重新生成，入库只会制造无意义的 diff）
+web/e2e/*.png
+
 # Office / WPS 临时文件（编辑简历、JD 文档时会产生）
 ~$*.doc
 ~$*.docx

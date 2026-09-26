@@ -27,7 +27,11 @@ def screen(
     provider: str | None = typer.Option(None, "--provider", help=PROVIDER_OPTION_HELP),
     model: str = typer.Option(None, "--model", help="模型名，如 deepseek-chat / qwen-plus"),
     limit: int = typer.Option(None, "--limit", help="只处理前 N 份（调试用）"),
-    no_cache: bool = typer.Option(False, "--no-cache", help="忽略缓存，强制重新解析提取"),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="忽略已有缓存、强制重算（新结果仍会写回缓存，供报告与界面复用）",
+    ),
 ) -> None:
     """执行筛选并导出 Excel。"""
     try:

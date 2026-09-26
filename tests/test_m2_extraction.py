@@ -14,7 +14,7 @@ from resume_screening.adapters.llm.fake import FakeLLMClient
 from resume_screening.adapters.parsers.pdf_pymupdf import parse_pdf
 from resume_screening.core.cache import ResumeCache
 from resume_screening.core.extractor import CORE_FIELDS, extract_resume
-from resume_screening.core.models import ExtractStatus, ParseStatus
+from resume_screening.core.models import ExtractStatus, ParseStatus, ResumeDocument
 
 
 def _payload() -> dict:
@@ -181,3 +181,101 @@ def test_work_and_education_records_parsed(single_column_pdf: Path, tmp_path: Pa
     assert doc.fields.work_experiences[0].company == "示例科技有限公司"
     assert len(doc.fields.education_records) == 1
     assert doc.fields.education_records[0].degree == "本科"
+
+
+# ——————————————————— 缓存失效语义 ———————————————————
+
+
+def test_forced_recompute_still_writes_back_to_cache(
+    single_column_pdf: Path, tmp_path: Path
+) -> None:
+    """`use_cache=False` 是"忽略旧缓存、强制重算"，**不是"不写缓存"**。
+
+    曾经的实现把写入也放在 `if use_cache:` 里：`--no-cache` 跑完，新结果只活在
+    这次运行的进程里，报告与界面读缓存拿到的还是旧值——表现成"重跑了一遍，
+    什么都没变"，而且完全看不出是缓存干的。
+    """
+    cache_dir = tmp_path / "cache"
+
+    doc = extract_resume(
+        parse_pdf(single_column_pdf),
+        FakeLLMClient(default=_payload()),
+        cache=ResumeCache(cache_dir),
+        use_cache=False,
+    )
+
+    assert (cache_dir / f"{doc.resume_id}.json").exists(), "强制重算的结果没有写回缓存"
+
+
+def test_extractor_tag_records_which_model_produced_the_result(
+    single_column_pdf: Path, tmp_path: Path
+) -> None:
+    """缓存键只有文件内容 hash，模型标识必须写进 extractor 才有得比对。"""
+    llm = FakeLLMClient(default=_payload())
+
+    doc = _extract(single_column_pdf, llm, tmp_path / "cache")
+
+    assert doc.extractor.endswith(f":{llm.name}"), doc.extractor
+
+
+def test_cache_hit_is_refused_when_the_extractor_tag_differs(tmp_path: Path) -> None:
+    """换模型、或升级提取逻辑后必须重算，不能静默复用旧结果。"""
+    cache = ResumeCache(tmp_path / "cache")
+    cache.put(
+        ResumeDocument(
+            resume_id="abc123",
+            source_path="/tmp/x.pdf",
+            extractor="extract-v1:model-a",
+        )
+    )
+
+    assert cache.hit("abc123", expect_extractor="extract-v1:model-a") is not None
+    assert cache.hit("abc123", expect_extractor="extract-v1:model-b") is None
+    assert cache.hit("abc123", expect_extractor="extract-v2:model-a") is None
+    # 不传期望值时不校验，只回答"有没有这份缓存"
+    assert cache.hit("abc123") is not None
+
+
+def test_changing_the_model_forces_re_extraction(single_column_pdf: Path, tmp_path: Path) -> None:
+    """端到端：同一模型第二次不调模型；换一个模型立刻重算。"""
+    cache = ResumeCache(tmp_path / "cache")
+    pr = parse_pdf(single_column_pdf)
+
+    first = FakeLLMClient(default=_payload())
+    extract_resume(pr, first, cache=cache)
+    extract_resume(pr, first, cache=cache)
+    assert first.call_count == 1
+
+    other = FakeLLMClient(default=_payload())
+    other.name = "another-model"
+    extract_resume(pr, other, cache=cache)
+    assert other.call_count == 1, "换了模型却命中了旧缓存"
+
+
+def test_both_cache_implementations_accept_the_same_hit_arguments(tmp_path: Path) -> None:
+    """两套缓存实现（JSON 文件版 / SQLite 版）必须保持同一套 `hit` 接口。
+
+    Web 端注入的是 SQLite 版。曾经只给文件版加了 `expect_extractor` 校验、
+    忘了 SQLite 版，于是服务端每次处理都抛 `TypeError`，异常被后台任务吞掉——
+    **上传后一份简历都出不来**，而单跑 CLI 完全正常（CLI 用文件版）。
+    接口对齐不能只靠"改的时候记得两处一起动"的自觉，要有测试盯着。
+    """
+    from resume_screening.store.db import Database
+    from resume_screening.store.resume_cache import SqliteResumeCache
+
+    doc = ResumeDocument(
+        resume_id="rid",
+        source_path="/tmp/x.pdf",
+        extractor="extract-v1:model-a",
+    )
+    caches = [
+        ResumeCache(tmp_path / "cache"),
+        SqliteResumeCache(Database(tmp_path / "d").init_schema()),
+    ]
+
+    for cache in caches:
+        name = type(cache).__name__
+        cache.put(doc)
+        assert cache.hit("rid", expect_extractor="extract-v1:model-a") is not None, name
+        assert cache.hit("rid", expect_extractor="extract-v1:model-b") is None, name
+        assert cache.hit("rid") is not None, name

@@ -183,13 +183,22 @@ def extract_resume(
     cache: "ResumeCache | None" = None,
     use_cache: bool = True,
 ) -> ResumeDocument:
-    """解析结果 → ResumeDocument。命中缓存不调模型；扫描件不送入模型。"""
+    """解析结果 → ResumeDocument。命中缓存不调模型；扫描件不送入模型。
+
+    `use_cache=False` 的含义是**忽略已有缓存、强制重算**，而不是"不写缓存"：
+    重算结果照常写回。否则 `--no-cache` 跑出来的新结果只活在这一次运行的进程里，
+    报告与界面读缓存拿到的还是旧值，表现成"重跑了一遍，什么都没变"。
+    """
     from .cache import ResumeCache  # 局部导入：避免循环依赖，保持模块可单独使用
 
     if cache is None:
         cache = ResumeCache()
+
+    # 缓存可信的条件：原文没变 + 提取逻辑没升级 + 同一个模型。
+    # 键（文件内容 hash）只覆盖第一条，后两条靠这个 tag 比对。
+    extractor_tag = f"{EXTRACTOR_VERSION}:{getattr(llm, 'name', 'unknown')}"
     if use_cache:
-        cached = cache.hit(parse_result.resume_id)
+        cached = cache.hit(parse_result.resume_id, expect_extractor=extractor_tag)
         if cached is not None:
             cached.source_path = parse_result.source_path  # 路径可能变，内容未变
             return cached
@@ -200,14 +209,13 @@ def extract_resume(
         file_name=parse_result.file_name,
         raw_text=parse_result.raw_text,
         parse_quality=parse_result.quality,
-        extractor=EXTRACTOR_VERSION,
+        extractor=extractor_tag,
     )
 
     if not parse_result.quality.usable:
         doc.extras["skipped_reason"] = "解析质量不达标（方案 §9：扫描件/无文本层不送入模型）"
         doc.extractor = f"{EXTRACTOR_VERSION}:skipped"
-        if use_cache:
-            cache.put(doc)
+        cache.put(doc)
         return doc
 
     payload = llm.complete_json(
@@ -224,8 +232,7 @@ def extract_resume(
     doc.fields = build_fields(payload, parse_result.raw_text, violations=violations)
     if violations:
         doc.extras["evidence_violations"] = violations
-    if use_cache:
-        cache.put(doc)
+    cache.put(doc)
     return doc
 
 

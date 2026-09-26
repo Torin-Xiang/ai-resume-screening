@@ -128,7 +128,7 @@ resume-screen serve --lan
 ## 开发
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q     # 206 passed
+.venv/Scripts/python.exe -m pytest -q     # 220 passed
 ```
 
 分层约定（改动前请读）：CLI 薄壳 → `services/`（业务编排）→ `core/`（纯逻辑，**不认识
@@ -167,6 +167,42 @@ TARGET=http://127.0.0.1:8000/ OPEN_FIRST_ROW=1 EXPECT_ROWS=3 node web/e2e/ui-smo
 （"功能存在但用户碰不到"是交付里最难发现的一类缺口）。
 
 脱敏简历样本放 `fixtures/`（已 gitignore，绝不入库）；合成测试夹具在 `tests/conftest.py`。
+
+### 用真实简历验解析层（不需要 API key）
+
+解析跑在本地，所以**拿到真实 PDF 就能验，不必等 key**。放一份到 `fixtures/` 之后：
+
+```bash
+.venv/Scripts/python.exe -m pytest tests/test_real_fixtures.py -q
+```
+
+`tests/test_real_fixtures.py` 只写**两条不依赖具体文件内容的断言**：
+① 每份真实简历必须给出明确结论（可送模型 或 明确需人工，且理由非空）；
+② 整页图片（含只有水印的文本层）**绝不送入模型**。
+
+两个刻意的设计：文件名**动态遍历，绝不写进代码**（这个文件会入库，写死真实姓名
+等于把个人信息又搬回仓库）；没有样本时整文件自动跳过，干净检出不会因此变红。
+
+想直接看每份的解析结果：
+
+```bash
+.venv/Scripts/python.exe - <<'PY'
+import sys, glob, pathlib
+sys.path.insert(0, "src")
+from resume_screening.adapters.parsers.pdf_pymupdf import parse_pdf
+for f in sorted(glob.glob("fixtures/*.pdf")):
+    q = parse_pdf(f).quality
+    print(f"{q.status.value:<13} 去重{q.unique_char_count:>5}字 图片覆盖{q.image_coverage:>5.2f} "
+          f"{pathlib.Path(f).name}")
+    for why in q.reasons:
+        print(f"              ! {why}")
+PY
+```
+
+> 这条命令是**踩过坑才加的**：4 份真实简历里有一份是"整页图片 + 只有水印的文本层"，
+> 自检原本判成 `suspect`（可疑）——而可疑**仍会送进模型**，模型对着水印只能编造字段，
+> 界面却显示"处理成功"。判据已改为「去重后字符数 + 图片覆盖率」，详见
+> `docs/技术方案.md` §11.2。
 
 ---
 

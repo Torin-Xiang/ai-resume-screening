@@ -23,6 +23,9 @@ from resume_screening.adapters.llm.factory import (
     has_api_key,
 )
 from resume_screening.adapters.llm.scripted import (
+    _LABEL_LIMIT,
+    _is_noise,
+    _short_label,
     ScriptedLLMClient,
     build_rubric_from_jd,
     extract_fields_from_text,
@@ -81,6 +84,50 @@ JD_PLAIN = """岗位职责
 2. 有 AI 产品、AIGC、大模型应用相关的实习或项目经历；
 加分项
 1. 有完整从 0 到 1 的 AI 产品项目经历，并能说明关键决策；
+"""
+
+
+#: 技能小节在真实样本里有三种写法（「技能/评价」「专业能力」「个人技能」），
+#: 这里按最麻烦的一种构造：条目里既有冒号前缀、又有顿号/分号分隔，
+#: 且同一行被 PDF 硬断行——「…用户研究、竞」+「品分析、PRD…」。
+RESUME_WITH_SKILLS = f"""{WATERMARK}
+李四
+138-0013-8000
+教育背景
+南洋理工大学（QS 12）
+企业人工智能硕士
+| 硕士
+2024.09-2027.06
+实习经历
+某某科技有限公司
+AI产品经理
+2024.07-至今
+技能/评价
+语言能力：英语（商务流利），可支持英文产品文档撰写与跨团队沟通。
+工具与数据能力：熟练使用Dify、Codex、Python、MySQL、LaTeX；具备大数据处能力，能独立完成数据取数与产品效果分析。
+AI 产品技能：大模型应用与Agent 开发、多智能体协同、RAG 检索增强、提示词工程、Vibe Coding；熟悉需求分析、用户研究、竞
+品分析、PRD 撰写与AB 测试方法论。
+"""
+
+
+#: 更常见的一种技能写法：每个条目自成一行、且**不以句号结尾**。
+#: 断行合并的判据若只看"末尾有没有句号"，这四行会被粘成一行，
+#: 切分后整段超过条目长度上限被丢弃，条目就整批消失（「Python」真的这么丢过）。
+RESUME_WITH_LABELLED_SKILL_ROWS = f"""{WATERMARK}
+王五
+138-0013-8000
+教育背景
+某某大学
+硕士
+实习经历
+某某公司
+产品经理
+2024.07-至今
+专业能力
+产品能力：需求分析、竞品调研、PRD撰写
+AI / LLM：Prompt、Workflow、RAG
+技术与工具：Python、PyTorch、API
+其他：CET-6
 """
 
 
@@ -161,6 +208,107 @@ def test_text_without_anything_recognisable_yields_no_fabrication() -> None:
     fields = extract_fields_from_text("这里什么都没有，只有一段无关的话。")["fields"]
 
     assert all(f["status"] == "not_mentioned" for f in fields.values())
+
+
+def test_school_suffix_is_stripped_off() -> None:
+    """院校名只留「XX大学」，不能把「（QS 12）」「（985、211）| 硕士」一起带走。
+
+    带上后缀后逐字比对就成了"值不符"，看报告的人还得自己分辨是抽错了、
+    还是只是多了装饰——这种噪声会把真正的问题淹掉。
+    """
+    fields = extract_fields_from_text(RESUME_WITH_SKILLS)["fields"]
+
+    assert fields["school"]["value"] == "南洋理工大学"
+
+
+@pytest.mark.parametrize("heading", ["技能/评价", "专业能力", "个人技能"])
+def test_skills_section_is_recognised_in_three_real_headings(heading: str) -> None:
+    """三种标题写法都来自真实样本，只认其中一种就会把技能抽成空。"""
+    text = RESUME_WITH_SKILLS.replace("技能/评价", heading)
+
+    values = extract_fields_from_text(text)["fields"]["skills"]["value"]
+
+    assert values, f"「{heading}」小节没被识别"
+    assert "Dify" in values and "Python" in values
+
+
+def test_skills_are_short_items_not_whole_sentences() -> None:
+    """技能栏要的是清单，不是整段自我评价。"""
+    values = extract_fields_from_text(RESUME_WITH_SKILLS)["fields"]["skills"]["value"]
+
+    assert isinstance(values, list)
+    assert all(len(v) <= 22 for v in values), values
+    assert not any(v.endswith(("。", "，", "、")) for v in values), values
+    # 「英语（商务流利），可支持英文产品文档撰写与跨团队沟通。」是自我评价，不是技能
+    assert not any("跨团队沟通" in v for v in values), values
+
+
+def test_hard_wrapped_skill_line_is_joined_before_splitting() -> None:
+    """PDF 会把长行硬断开。不先拼回去，就会切出「品分析」这种半截词混进技能清单。"""
+    values = extract_fields_from_text(RESUME_WITH_SKILLS)["fields"]["skills"]["value"]
+
+    assert "竞品分析" in values, values
+    assert "品分析" not in values, f"断行没拼回去，切出了半截词：{values}"
+
+
+def test_watermark_judgement_is_a_positive_pattern_not_an_absence_of_chinese() -> None:
+    """水印判据必须是**正向特征**：整行只由字母数字与 `-_` 组成。
+
+    写成"不含汉字"就会误杀纯英文技能行——中文全角标点（`：、；（）`）
+    不在 `\\u4e00-\\u9fff` 范围内，`AI / LLM：Prompt、Workflow、RAG`
+    会被整行当水印删掉，技能栏直接空掉。
+    """
+    assert _is_noise(WATERMARK) is True
+    assert _is_noise("AI / LLM：Prompt、Workflow、RAG") is False
+    assert _is_noise("Prompt, Workflow, RAG") is False
+
+
+def test_labelled_skill_rows_are_not_glued_together() -> None:
+    """带 `xx：` 标签的行必然是**新条目**，不能被当成上一行的折行续写。"""
+    values = extract_fields_from_text(RESUME_WITH_LABELLED_SKILL_ROWS)["fields"]["skills"]["value"]
+
+    for expected in ("需求分析", "Prompt", "RAG", "Python", "PyTorch", "API", "CET-6"):
+        assert expected in values, f"{expected} 丢了：{values}"
+
+
+def test_skills_evidence_is_a_literal_substring() -> None:
+    """技能抽成列表后，证据同样要是原文片段——否则核心侧会把整个字段降级。"""
+    item = extract_fields_from_text(RESUME_WITH_SKILLS)["fields"]["skills"]
+
+    assert item["status"] == "extracted"
+    assert item["evidence"]["quote"] in RESUME_WITH_SKILLS
+
+
+def test_dimension_label_prefers_the_first_clause() -> None:
+    assert (
+        _short_label("具备较强的逻辑思维与结构化表达能力，能独立完成需求文档")
+        == "具备较强的逻辑思维与结构化表达能力"
+    )
+
+
+def test_overlong_dimension_label_is_truncated_with_a_visible_marker() -> None:
+    """超长才截断，且必须留 `…`——静默切断会让人以为原文就这么写。
+
+    曾经的写法是 `body[:18]`，把「ChatGPT」切成「ChatGP」还留个尾逗号，
+    再写进评分卡 JSON 长期留存，看起来像数据损坏。
+    """
+    label = _short_label(
+        "熟悉主流大模型产品（如 ChatGPT、Claude、Gemini 等主流 AI 工具），能独立完成需求文档与原型设计"
+    )
+
+    assert label.endswith("…"), label
+    assert len(label) <= _LABEL_LIMIT, label
+    # 括号必须成对：不留下「熟悉主流大模型产品（如 ChatGPT…」这种半截括号
+    assert label.count("（") == label.count("）"), label
+
+
+def test_generated_dimension_names_never_end_with_dangling_punctuation() -> None:
+    rubric = build_rubric_from_jd(JD_MARKDOWN, "AI 产品经理")
+
+    names = [d["name"] for d in rubric["hard_filters"] + rubric["bonus"]]
+
+    assert names
+    assert all(n and n[-1] not in "，、；：,;:" for n in names), names
 
 
 # ——————————————————— 评分卡生成 ———————————————————

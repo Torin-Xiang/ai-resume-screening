@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...core.rubric import Rubric
+from ...core.rubric_gen import generate_rubric
 from ...services import jobs as jobs_service
 from ...services import rescore as rescore_service
 from ...store.db import Database
 from ...store.entities import Job
 from ..deps import get_db, get_llm
-from ..schemas import JobCreate, JobOut, JobUpdate, RescoreStatsOut, RubricOut, RubricSetIn
+from ..schemas import (
+    JobCreate,
+    JobOut,
+    JobUpdate,
+    RescoreStatsOut,
+    RubricGenerateIn,
+    RubricGenerateOut,
+    RubricOut,
+    RubricSetIn,
+)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -125,6 +137,38 @@ async def set_rubric(
 def list_rubric_versions(job_id: str, db: Database = Depends(get_db)) -> list[RubricOut]:
     jobs_service.require_job(db, job_id)
     return [_to_rubric_out(v) for v in jobs_service.list_rubric_versions(db, job_id)]
+
+
+@router.post("/{job_id}/rubric/generate", response_model=RubricGenerateOut)
+async def generate_rubric_draft(
+    job_id: str,
+    payload: RubricGenerateIn,
+    db: Database = Depends(get_db),
+    llm=Depends(get_llm),
+) -> RubricGenerateOut:
+    """从 JD 生成一份标准**草稿**。
+
+    默认只返回草稿不落库——生成出来的判定口径（`definition` 与正反例）必须经
+    HR 确认才生效，这是"改标准必须确认后生效"（产品方案 §6.4）在建岗这一步的延伸。
+    """
+    job = jobs_service.require_job(db, job_id)
+    jd = (payload.jd_text or job.jd_text).strip()
+    if not jd:
+        raise HTTPException(status_code=422, detail="JD 为空，无法生成筛选标准")
+
+    rubric, dropped = await asyncio.to_thread(
+        generate_rubric, jd, llm, version=payload.version or None, job_title=job.title
+    )
+
+    if not payload.save:
+        return RubricGenerateOut(
+            rubric=rubric.model_dump(mode="json"), dropped=dropped, saved=False
+        )
+
+    info = jobs_service.set_rubric(db, job_id, rubric, note="由 JD 自动生成")
+    return RubricGenerateOut(
+        rubric=info.payload, dropped=dropped, saved=True, rubric_id=info.rubric_id, version=info.version
+    )
 
 
 @router.post("/{job_id}/ranking/rebuild", response_model=RescoreStatsOut)

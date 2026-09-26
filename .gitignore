@@ -37,6 +37,7 @@ node_modules/
 dist/
 build/
 *.log
+*.tsbuildinfo
 
 # Office / WPS 临时文件（编辑简历、JD 文档时会产生）
 ~$*.doc

@@ -57,6 +57,20 @@ class RubricSetIn(BaseModel):
     make_current: bool = Field(True, description="是否设为当前标准")
 
 
+class RubricGenerateIn(BaseModel):
+    jd_text: str = Field("", description="留空则用岗位自带的 JD")
+    save: bool = Field(False, description="是否生成后直接保存；默认只返回草稿供确认")
+    version: str = Field("", description="留空则自动编号")
+
+
+class RubricGenerateOut(BaseModel):
+    rubric: dict[str, Any]
+    dropped: list[str] = Field(default_factory=list, description="因合规红线被剔除的维度")
+    saved: bool = False
+    rubric_id: str | None = None
+    version: str | None = None
+
+
 class RescoreStatsOut(BaseModel):
     total: int = 0
     rescored: int = 0

@@ -53,7 +53,29 @@ _PUNCT = re.compile(r"[\s|（）()、，,；;：:·・\-—–_/]")
 
 
 def _norm(value: Any) -> str:
+    """归一化后比对：忽略空白、标点、大小写与全半角差异。
+
+    列表字段（`skills` 是 `list[str]`）必须先展开成一行再归一化。
+    直接 `str(["Dify", "Codex"])` 会得到 `['dify', 'codex']`——方括号和引号
+    不在 `_PUNCT` 里，于是**即使抽对了也永远判为"值不符"**，
+    把一个真实的 bug 伪装成模型抽错。这个坑已经踩过一次。
+    """
+    if isinstance(value, (list, tuple)):
+        value = "、".join(str(v) for v in value)
     return _PUNCT.sub("", str(value or "")).lower()
+
+
+def _clip(text: str, limit: int) -> str:
+    """超长才截断，并补省略号——不要静默切掉，那看着像数据损坏。"""
+    text = str(text or "")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _display(value: Any) -> str:
+    """展示用：列表拼成一行（`skills` 是 list），空值统一显示成 `—`。"""
+    if isinstance(value, (list, tuple)):
+        value = "、".join(str(v) for v in value)
+    return str(value) if value else "—"
 
 
 def _norm_contact(value: Any) -> str:
@@ -113,8 +135,10 @@ def print_ranking(run: dict[str, Any]) -> None:
         verdict = VERDICT_LABELS.get(r.get("verdict", ""), r.get("verdict", ""))
         score = f"{r.get('score', 0):g}/{r.get('max_score', 0):g}"
         hard = [d for d in (r.get("dimensions") or []) if d.get("kind") == "hard_filter"]
-        hard_txt = "、".join(
-            f"{d['name'][:8]}={d['judgement']}" for d in hard
+        # 用「；」而不是「、」连接：维度名自己就常带顿号
+        # （「有 AI 产品、AIGC、大模型应用」），用顿号连会把两件事粘成一件。
+        hard_txt = "；".join(
+            f"{_clip(d.get('name'), 12)}={d.get('judgement')}" for d in hard
         ) or "—"
         print(f"  {i:<3}{(r.get('candidate_name') or '（无）'):<8}{verdict:<8}{score:<12}{hard_txt}")
     print()
@@ -144,8 +168,11 @@ def print_fields(run: dict[str, Any], docs: dict[str, dict[str, Any]]) -> None:
                 value = "、".join(str(v) for v in value)
             evidence = item.get("evidence") or {}
             quote = (evidence.get("quote") or "") if isinstance(evidence, dict) else ""
+            # 技能这类列表字段拼起来会很长，不截断就把"原文证据"列挤到看不见。
+            # 截断带 `…`，完整值仍在缓存里（界面可查）。
+            cell = _clip(_display(value), 26)
             print(
-                f"    {FIELD_LABELS.get(name, name):<10}{status:<10}{str(value or '—'):<26}"
+                f"    {FIELD_LABELS.get(name, name):<10}{status:<10}{cell:<26}"
                 f"{quote[:40] or '（无）'}"
             )
 
@@ -197,13 +224,13 @@ def score_truth(run: dict[str, Any], docs: dict[str, dict[str, Any]], truth: dic
             if want is None and status == "not_mentioned":
                 ok, note = True, "原文确无此项，双方一致"
             elif want is None and got:
-                ok, note = False, f"原文未见，却抽出「{got}」"
+                ok, note = False, f"原文未见，却抽出「{_display(got)}」"
             elif want is not None and status != "extracted":
                 ok, note = False, f"漏抽（状态 {status}）"
             elif ok:
                 note = "一致"
             else:
-                note = f"值不符：期望「{want}」实得「{got or '—'}」"
+                note = f"值不符：期望「{_display(want)}」实得「{_display(got)}」"
             if name == "contact" and want is not None and status == "extracted":
                 ok = _norm_contact(want) == _norm_contact(got)
                 note = "号码一致" if ok else note
@@ -231,6 +258,12 @@ def score_truth(run: dict[str, Any], docs: dict[str, dict[str, Any]], truth: dic
         print("\n  不通过的明细：")
         for line in rows:
             print(line)
+    if any("值不符" in line for line in rows):
+        print(
+            "\n  提示：「值不符」不等于抽错。人工基准写的是关键词清单，抽取结果常比它更全，\n"
+            "        或换了同义词（基准「RAG」／实得「RAG 检索增强」）。这类差异要人看，\n"
+            "        不能只看一个百分比就判功能坏了。"
+        )
 
 
 def main() -> int:

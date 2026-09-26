@@ -65,7 +65,9 @@ def main() -> int:
     print(f"   类型                  {type(client).__name__}")
     print(f"   name                  {client.name}")
     print(f"   model                 {client.model}")
-    print(f"   base_url              {client.base_url}")
+    # base_url 用 getattr：离线通道（scripted）不联网，压根没有这个属性。
+    # 直接取属性会在切到离线时抛 AttributeError——自检脚本自己崩掉最讽刺。
+    print(f"   base_url              {getattr(client, 'base_url', None) or '（本地规则，不联网）'}")
     fake = client.name == "fake"
     print(f"   假模拟模型模式        {'⚠ 仍开启（不会产出真实结果）' if fake else '✓ 已关闭'}")
     print("—" * 58)

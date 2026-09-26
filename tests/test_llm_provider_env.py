@@ -125,3 +125,39 @@ def test_console_script_entry_point_loads_dotenv() -> None:
     from resume_screening.cli.main import main
 
     assert callable(main)
+
+
+# ——————————————————— 自检脚本 ———————————————————
+
+def _load_check_script():
+    """加载 scripts/check_llm_env.py（scripts 不是包，走 importlib）。"""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "check_llm_env.py"
+    spec = importlib.util.spec_from_file_location("check_llm_env", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_check_script_survives_the_scripted_provider(monkeypatch) -> None:
+    """自检脚本必须能在离线通道下跑完，而不是自己先崩。
+
+    scripted 客户端没有 base_url 属性（它不联网），脚本曾直接取属性
+    抛 AttributeError——诊断工具在用户最需要它的时候先坏掉，最讽刺。
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    monkeypatch.setenv("LLM_PROVIDER", "scripted")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = _load_check_script().main()
+
+    assert code == 0
+    out = buf.getvalue()
+    assert "scripted" in out
+    assert "不联网" in out

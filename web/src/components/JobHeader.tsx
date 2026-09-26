@@ -4,7 +4,9 @@ interface Props {
   job: Job
   rubric: RubricVersion | null
   connected: boolean
+  exporting: boolean
   onEditRubric: () => void
+  onExport: () => void
   onArchive: () => void
 }
 
@@ -15,7 +17,15 @@ function summarize(rubric: RubricVersion | null): string {
 }
 
 /** 右栏顶部：当前岗位的 JD 与标准摘要。 */
-export function JobHeader({ job, rubric, connected, onEditRubric, onArchive }: Props) {
+export function JobHeader({
+  job,
+  rubric,
+  connected,
+  exporting,
+  onEditRubric,
+  onExport,
+  onArchive,
+}: Props) {
   return (
     <header className="job-header">
       <div className="job-header-main">
@@ -25,6 +35,7 @@ export function JobHeader({ job, rubric, connected, onEditRubric, onArchive }: P
           <span className={`chip${rubric ? '' : ' chip-warn'}`}>
             {rubric ? `标准 ${rubric.version} · ${summarize(rubric)}` : '尚未设置筛选标准 —— 上传后无法评估'}
           </span>
+          <span className="chip">{job.resume_count} 份简历</span>
           <span className={`chip chip-dot${connected ? '' : ' chip-off'}`}>
             {connected ? '实时更新中' : '连接已断开'}
           </span>
@@ -33,6 +44,15 @@ export function JobHeader({ job, rubric, connected, onEditRubric, onArchive }: P
       <div className="job-header-actions">
         <button type="button" className="btn" onClick={onEditRubric}>
           查看 / 调整标准
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={onExport}
+          disabled={exporting || !rubric}
+          title={rubric ? '' : '还没有标准，导出的表不会有结论'}
+        >
+          {exporting ? '导出中…' : '导出 Excel'}
         </button>
         <button type="button" className="btn btn-ghost" onClick={onArchive}>
           归档岗位

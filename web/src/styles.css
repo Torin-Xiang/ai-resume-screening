@@ -956,3 +956,355 @@ code {
 .version-time {
   margin-left: auto;
 }
+
+/* ————————————— 对话式改标准（产品方案 §5 P0#5）—————————————
+   刻意放在工作区首屏可见的位置，不塞进抽屉：改口径是 HR 的日常动作，
+   藏在两层点击之后就会退化成"步骤多、不明了"的老毛病。 */
+
+.chat {
+  margin: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+.chat-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.chat-input:disabled {
+  opacity: 0.6;
+}
+
+.chat-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-example {
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.chat-example:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.chat-notice {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chat-card {
+  margin-top: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 12px 14px;
+}
+
+.chat-refused {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.chat-refused p {
+  margin: 6px 0;
+  color: var(--text);
+}
+
+.chat-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.chat-card-head .muted {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+/* 变更清单：默认全选，HR 要减再减 */
+.patch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.patch-list label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.patch-list input[type='checkbox'] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.patch-op {
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 0 6px;
+  background: var(--neutral-soft);
+  color: var(--neutral);
+}
+
+.patch-op-add {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.patch-op-remove {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.patch-op-modify {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.patch-desc {
+  font-weight: 500;
+}
+
+.patch-reason {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-basis: 100%;
+  padding-left: 22px;
+}
+
+/* 影响预估：能算的给数字，算不准的明说 */
+.impact {
+  margin-top: 12px;
+  border-top: 1px dashed var(--border-strong);
+  padding-top: 10px;
+}
+
+.impact-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.impact-counts {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.impact-counts li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+}
+
+.impact-group {
+  color: var(--text-muted);
+}
+
+.impact-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+}
+
+.impact-num-changed {
+  color: var(--accent);
+}
+
+.impact-arrow {
+  color: var(--text-faint);
+}
+
+.impact-moves {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.impact-moves li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.move-name {
+  min-width: 96px;
+}
+
+.move-change {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--accent);
+}
+
+.move-note {
+  flex-basis: 100%;
+}
+
+/* 没算进来的份数：单独强调，避免 HR 以为预估覆盖了全部简历 */
+.impact-flag {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+
+.impact-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chat-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ————————————— 粘贴文本兜底（产品方案 §6.1 P0#9）————————————— */
+
+.uploader-fallback {
+  margin-top: 6px;
+  text-align: center;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.paste-box {
+  margin-top: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.paste-tip {
+  margin: 0;
+  font-size: 12px;
+}
+
+.paste-name,
+.paste-text {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.paste-text {
+  min-height: 130px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.paste-name:focus,
+.paste-text:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.paste-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.paste-actions .btn {
+  margin-left: auto;
+}
+
+/* ————————————— 版本回滚 ————————————— */
+
+.version-tag-current {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.version-current {
+  font-size: 12px;
+}

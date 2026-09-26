@@ -155,6 +155,78 @@ export interface RubricGenerateResult {
   version: string | null
 }
 
+// —————————————— 对话式改标准（产品方案 P0#5，技术方案 §7）——————————————
+
+export interface RubricPatch {
+  index: number
+  op: string
+  kind: string
+  target_id: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  reason: string
+  description: string
+}
+
+export interface ImpactMove {
+  resume_id: string
+  file_name: string
+  from_verdict: string
+  to_verdict: string | null
+  from_score: number
+  to_score: number | null
+  note: string
+}
+
+/**
+ * 对现有排名的影响。
+ *
+ * `exact === false` 时**不得**把 `counts_after` 当成结论展示：新增维度或口径
+ * 变化无法从旧结论推算，必须等确认后重排。宁可说"算不准"，也不给假数字。
+ */
+export interface Impact {
+  total: number
+  not_scored: number
+  exact: boolean
+  unknown_candidates: number
+  changed: number
+  counts_before: Record<string, number>
+  counts_after: Record<string, number>
+  moves: ImpactMove[]
+  notes: string[]
+}
+
+export interface RubricProposal {
+  proposal_id: string
+  utterance: string
+  summary: string
+  refused: boolean
+  refused_reason: string
+  patches: RubricPatch[]
+  impact: Impact
+}
+
+export interface RubricApplyResult {
+  rubric_id: string
+  version: string
+  applied: number
+  rescored: number
+  llm_calls: number
+}
+
+export const OP_LABELS: Record<string, string> = {
+  add: '新增',
+  modify: '修改',
+  remove: '删除',
+}
+
+/** 判定 → 分组标签（与后端 services/ranking.GROUP_LABELS 对齐）。 */
+export const VERDICT_LABELS: Record<string, string> = {
+  pass: '推荐',
+  needs_review: '待确认',
+  reject: '不推荐',
+}
+
 /** 处理中 = 还没出结论，界面上**不显示分数**（产品方案 §6.1）。 */
 export const PENDING_STATUSES: ResumeStatus[] = [
   'queued',

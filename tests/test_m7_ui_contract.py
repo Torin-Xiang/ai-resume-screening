@@ -119,6 +119,30 @@ def test_frontend_covers_core_journey(app) -> None:
         assert path in known, f"主链路端点缺失：{path}"
 
 
+# 后端已实现、前端必须真的挂上的 P0 动作。
+# 上一条断言管的是"前端调了后端没有"，这一条管反方向：**后端做了但界面没接**——
+# 那是交付里最难发现的一类缺口，功能"存在"但用户碰不到，测试全绿也说明不了什么。
+WIRED_P0_ENDPOINTS: dict[str, str] = {
+    "/api/jobs/*/rubric/propose": "对话式改标准：提交一句话",
+    "/api/jobs/*/rubric/apply": "对话式改标准：确认生效 / 部分采纳",
+    "/api/jobs/*/rubric/rollback": "标准版本回滚",
+    "/api/jobs/*/rubric/versions": "历史版本列表",
+    "/api/jobs/*/resumes/text": "扫描件兜底：粘贴简历文本",
+    "/api/jobs/*/export": "导出 Excel",
+}
+
+
+def test_every_p0_action_is_wired_into_the_ui() -> None:
+    """每个 P0 动作都要在界面上有入口，不能只躺在后端。"""
+    calls = frontend_calls()
+    unwired = [
+        f"  {path}  （{label}）"
+        for path, label in WIRED_P0_ENDPOINTS.items()
+        if path not in calls
+    ]
+    assert not unwired, "以下 P0 动作后端已实现，但前端没有任何调用点：\n" + "\n".join(unwired)
+
+
 # ——————————————————— 构建产物完整性 ———————————————————
 
 ASSET_REFERENCE = re.compile(r'(?:src|href)="(/[^"]+)"')

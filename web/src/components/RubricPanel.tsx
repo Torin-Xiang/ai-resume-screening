@@ -12,15 +12,18 @@ interface Props {
 }
 
 /**
- * 标准面板：查看 / 由 JD 生成草稿 / 直接编辑 JSON / 保存。
+ * 标准面板：查看 / 由 JD 生成草稿 / 直接编辑 JSON / 保存 / 回滚到历史版本。
  *
  * 保存后**立刻按新标准重排**（后端只重跑评分层，不重新解析），
  * 所以改口径不需要重新上传任何简历。
+ *
+ * 用一句话改标准走的是工作区里的对话条（RubricChat），不在这里——
+ * 那是日常动作，不该藏在抽屉里点两层才够得着。
  */
 export function RubricPanel({ job, rubric, onClose, onChanged, onError }: Props) {
   const [text, setText] = useState('')
   const [versions, setVersions] = useState<RubricVersion[]>([])
-  const [busy, setBusy] = useState<'idle' | 'generating' | 'saving'>('idle')
+  const [busy, setBusy] = useState<'idle' | 'generating' | 'saving' | 'rolling'>('idle')
   const [dropped, setDropped] = useState<string[]>([])
   const [notice, setNotice] = useState('')
 
@@ -68,6 +71,27 @@ export function RubricPanel({ job, rubric, onClose, onChanged, onError }: Props)
         '界面调整',
       )
       setNotice(`已保存为 ${saved.version}，并按新标准重排（未重新解析简历）。`)
+      onChanged()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
+  const rollback = async (target: RubricVersion) => {
+    const confirmed = window.confirm(
+      `回滚到 ${target.version}？\n\n` +
+        '回滚是把旧版本重新设为当前版本，并立刻按它重排排名。' +
+        '历史版本不会被删除，「改了又改回来」这件事也留在版本记录里。',
+    )
+    if (!confirmed) return
+    setBusy('rolling')
+    setNotice('')
+    try {
+      const saved = await api.rollbackRubric(job.job_id, target.rubric_id)
+      setText(JSON.stringify(saved.payload, null, 2))
+      setNotice(`已回滚到 ${target.version}，当前版本为 ${saved.version}，排名已按它重排。`)
       onChanged()
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
@@ -134,15 +158,34 @@ export function RubricPanel({ job, rubric, onClose, onChanged, onError }: Props)
 
         {versions.length > 0 && (
           <div className="drawer-versions">
-            <span className="muted">历史版本（改标准不会覆盖旧版本，可回溯与对比）</span>
+            <span className="muted">历史版本（改标准不会覆盖旧版本，可回溯、可回滚、可对比）</span>
             <ul>
-              {versions.map((version) => (
-                <li key={version.rubric_id}>
-                  <span className="version-tag">{version.version}</span>
-                  <span className="muted">{version.note || '—'}</span>
-                  <span className="muted version-time">{version.created_at.replace('T', ' ')}</span>
-                </li>
-              ))}
+              {versions.map((version) => {
+                const current = version.rubric_id === rubric?.rubric_id
+                return (
+                  <li key={version.rubric_id}>
+                    <span className={`version-tag${current ? ' version-tag-current' : ''}`}>
+                      {version.version}
+                    </span>
+                    <span className="muted">{version.note || '—'}</span>
+                    <span className="muted version-time">
+                      {version.created_at.replace('T', ' ')}
+                    </span>
+                    {current ? (
+                      <span className="muted version-current">当前</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        disabled={busy !== 'idle'}
+                        onClick={() => void rollback(version)}
+                      >
+                        {busy === 'rolling' ? '回滚中…' : '回滚到此版本'}
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </div>
         )}

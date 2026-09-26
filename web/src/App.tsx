@@ -6,6 +6,7 @@ import { JobList } from './components/JobList'
 import { NewJobForm } from './components/NewJobForm'
 import { RankingBoard } from './components/RankingBoard'
 import { ResumeStatusPanel } from './components/ResumeStatusPanel'
+import { RubricChat } from './components/RubricChat'
 import { RubricPanel } from './components/RubricPanel'
 import type { ReviewDecision } from './components/CandidateRow'
 import { Uploader } from './components/Uploader'
@@ -29,7 +30,13 @@ export default function App() {
   const [showRubric, setShowRubric] = useState(false)
   const [creating, setCreating] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [rejected, setRejected] = useState<UploadRejected[]>([])
+
+  // 同一个岗位的三份数据（排名 / 简历 / 标准）一起重拉。抽成一个 token，
+  // 是为了让"标准变了"也能触发重拉——只重拉排名和简历会让顶部一直显示旧版本号。
+  const [reloadToken, setReloadToken] = useState(0)
+  const reloadJobData = useCallback(() => setReloadToken((current) => current + 1), [])
 
   const activeJob = jobs.find((job) => job.job_id === activeJobId) ?? null
 
@@ -66,7 +73,7 @@ export default function App() {
     })()
   }, [loadJobs])
 
-  // —— 切换岗位：重新拉取该岗位的排名、简历与标准 ——
+  // —— 切换岗位 / 数据变更：重新拉取该岗位的排名、简历与标准 ——
   // 三个请求各自独立处理：任何一个失败都不该让另外两个的数据也显示不出来
   useEffect(() => {
     if (!activeJobId) {
@@ -95,7 +102,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [activeJobId, reportError])
+  }, [activeJobId, reloadToken, reportError])
 
   // —— 事件驱动的刷新（后端已对排名推送做过合并，这里再做一层防抖）——
   const refreshTimer = useRef<number | null>(null)
@@ -103,14 +110,10 @@ export default function App() {
     if (refreshTimer.current !== null) return
     refreshTimer.current = window.setTimeout(() => {
       refreshTimer.current = null
-      const jobId = activeJobIdRef.current
-      if (jobId) {
-        void api.getRanking(jobId).then(setRanking).catch(() => undefined)
-        void api.listResumes(jobId).then(setResumes).catch(() => undefined)
-      }
+      reloadJobData()
       void loadJobs()
     }, REFRESH_DEBOUNCE_MS)
-  }, [loadJobs])
+  }, [loadJobs, reloadJobData])
 
   const connected = useJobEvents(activeJobId, () => scheduleRefresh())
 
@@ -152,6 +155,37 @@ export default function App() {
       reportError(cause)
     } finally {
       setUploading(false)
+    }
+  }
+
+  const handlePaste = async (text: string, fileName: string): Promise<boolean> => {
+    const jobId = activeJobIdRef.current
+    if (!jobId) return false
+    try {
+      const item = await api.pasteResume(jobId, text, fileName)
+      if (!item.is_new) {
+        // 内容与已有简历完全相同（按内容 hash 判重），说明这份已经在池子里了。
+        // 不说的话 HR 会以为没提交成功，反复粘贴。
+        setError(`「${item.file_name}」的内容与已有一份完全相同，已合并为同一条，不重复评估。`)
+      }
+      scheduleRefresh()
+      return true
+    } catch (cause) {
+      reportError(cause)
+      return false
+    }
+  }
+
+  const handleExport = async () => {
+    const jobId = activeJobIdRef.current
+    if (!jobId) return
+    setExporting(true)
+    try {
+      await api.exportRanking(jobId)
+    } catch (cause) {
+      reportError(cause)
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -223,14 +257,23 @@ export default function App() {
               job={activeJob}
               rubric={rubric}
               connected={connected}
+              exporting={exporting}
               onEditRubric={() => setShowRubric(true)}
+              onExport={() => void handleExport()}
               onArchive={handleArchive}
+            />
+            <RubricChat
+              jobId={activeJob.job_id}
+              hasRubric={Boolean(rubric)}
+              onApplied={scheduleRefresh}
+              onError={reportError}
             />
             <Uploader
               disabled={uploading}
               uploading={uploading}
               rejected={rejected}
-              onFiles={handleFiles}
+              onFiles={(files) => void handleFiles(files)}
+              onPaste={handlePaste}
             />
             <ResumeStatusPanel resumes={resumes} onRemove={handleRemoveResume} />
             <RankingBoard ranking={ranking} onReview={handleReview} />

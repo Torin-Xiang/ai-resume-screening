@@ -18,7 +18,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from ..core.llm import LLMClient
+from ..core.llm import LLMClient, humanize_llm_error
 from ..core.pipeline import (
     STAGE_EXTRACTING,
     STAGE_PARSING,
@@ -278,5 +278,10 @@ class ScreeningWorker:
 
     @staticmethod
     def _describe(exc: BaseException) -> str:
+        # 先尝试翻译成人话（余额不足/密钥无效这类有明确"下一步"的错误）；
+        # 认不出的才原样显示——宁可看到原始报错，也不能编一个像人话的错误解释。
+        human = humanize_llm_error(exc)
+        if human is not None:
+            return human[:MAX_ERROR_CHARS]
         text = str(exc).strip() or exc.__class__.__name__
         return f"{exc.__class__.__name__}：{text}"[:MAX_ERROR_CHARS]

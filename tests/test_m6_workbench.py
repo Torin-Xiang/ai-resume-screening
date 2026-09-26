@@ -29,6 +29,7 @@ from resume_screening.core.models import CandidateResult, Judgement, ScreeningVe
 from resume_screening.core.prompts import EXTRACT_SYSTEM
 from resume_screening.core.rubric import Bonus, HardFilter, Rubric
 from resume_screening.services import jobs as jobs_service
+from resume_screening.services.worker import ScreeningWorker
 from resume_screening.services.ranking import (
     GROUP_NEEDS_REVIEW,
     GROUP_NOT_RECOMMEND,
@@ -740,3 +741,48 @@ def _resume_items(*, offset: float = 0) -> list[tuple[float, float, str]]:
     if not offset:
         return base
     return [(x, y + offset, text) for x, y, text in base]
+
+
+# ——————————————————— 错误信息翻译 ———————————————————
+
+def test_known_llm_errors_are_translated_into_next_actions() -> None:
+    """HR 应看到"下一步干什么"，不是一坨 JSON。
+
+    402 Insufficient Balance 是最常见的一类：真密钥但没充值。
+    原样显示时，错误里埋着 `'message': 'Insufficient Balance...'`，
+    HR 根本看不出"去充值"这个动作。
+    """
+    from resume_screening.core.llm import humanize_llm_error
+
+    class _Fake402(Exception):
+        status_code = 402
+
+        def __str__(self) -> str:
+            return "Error code: 402 - {'error': {'message': 'Insufficient Balance'}}"
+
+    msg = humanize_llm_error(_Fake402("Error code: 402 - Insufficient Balance"))
+    assert msg is not None
+    assert "余额不足" in msg
+    assert "充值" in msg
+
+
+def test_unknown_errors_still_show_the_original_text() -> None:
+    """认不出的错误宁可原样显示——编一个像人话的解释比难看更危险。"""
+    from resume_screening.core.llm import humanize_llm_error
+
+    assert humanize_llm_error(ValueError("什么都不是")) is None
+    assert ScreeningWorker._describe(ValueError("什么都不是")) == "ValueError：什么都不是"
+
+
+def test_worker_fail_path_uses_the_humanized_message(tmp_path: Path) -> None:
+    """端到端：worker 失败时界面上看到的是人话，不是 SDK 异常堆。"""
+    class _Fake402(Exception):
+        status_code = 402
+
+        def __str__(self) -> str:
+            return "Error code: 402 - {'error': {'message': 'Insufficient Balance'}}"
+
+    description = ScreeningWorker._describe(_Fake402("Error code: 402 - Insufficient Balance"))
+
+    assert "APIStatusError" not in description
+    assert "余额不足" in description

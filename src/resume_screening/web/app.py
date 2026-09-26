@@ -15,8 +15,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..adapters.llm.factory import build_llm_client
 from ..adapters.parsers.pdf_pymupdf import PdfPymupdfParser
+from ..services import llm_settings
 from ..services.events import EventBus
 from ..services.jobs import JobNotFound, RubricNotSet
 from ..services.worker import DEFAULT_CONCURRENCY, ScreeningWorker
@@ -26,6 +26,7 @@ from .routers import events as events_routes
 from .routers import jobs as jobs_routes
 from .routers import ranking as ranking_routes
 from .routers import resumes as resumes_routes
+from .routers import settings as settings_routes
 
 # 必须在挂载静态资源**之前**执行。
 # Windows 注册表里 .js 的 Content-Type 可能是 text/plain，而 Python 的 mimetypes
@@ -69,7 +70,12 @@ def create_app(
     """装配应用。所有外部依赖可注入，便于测试整体替换（不触网、不建真实库）。"""
     db = Database(data_dir).init_schema()
     bus = EventBus()
-    client = llm if llm is not None else build_llm_client()
+    if llm is not None:
+        # 测试/演练注入的替身优先级最高，绝不读配置文件（否则测试结果随机器漂移）
+        client = llm
+    else:
+        # 上次界面里选过的通道优先于 .env 默认（见 services/llm_settings 的说明）
+        client = llm_settings.build_client(llm_settings.load_choice(db.data_dir))
     resume_parser = parser if parser is not None else PdfPymupdfParser()
     worker = ScreeningWorker(
         db=db,
@@ -110,9 +116,11 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
+        # provider 从 worker 实时取：界面切换通道后这里必须跟着变，
+        # 否则 health 报告的通道和实际用的是两个（就是"改了 .env 没重启"那种错位）
         return {
             "status": "ok",
-            "provider": getattr(client, "name", "unknown"),
+            "provider": worker.llm_name,
             "concurrency": worker.concurrency,
             "pending": worker.pending,
         }
@@ -121,6 +129,7 @@ def create_app(
     app.include_router(resumes_routes.router)
     app.include_router(ranking_routes.router)
     app.include_router(events_routes.router)
+    app.include_router(settings_routes.router)
 
     # 前端静态资源放在最后挂载，避免拦截 /api 路由
     if UI_DIST.is_dir():

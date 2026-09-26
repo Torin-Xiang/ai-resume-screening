@@ -214,6 +214,20 @@ export interface RubricApplyResult {
   llm_calls: number
 }
 
+export interface LlmChoice {
+  provider: string
+  model: string
+  label: string
+  needs_key: string
+  available: boolean
+}
+
+export interface LlmSettings {
+  provider: string
+  model: string
+  choices: LlmChoice[]
+}
+
 export const OP_LABELS: Record<string, string> = {
   add: '新增',
   modify: '修改',

@@ -102,6 +102,23 @@ class ScreeningWorker:
         return self._concurrency
 
     @property
+    def llm(self) -> LLMClient:
+        """当前模型客户端。运行中可被 `set_llm` 整体替换（界面切换通道用）。"""
+        return self._llm
+
+    @property
+    def llm_name(self) -> str:
+        return getattr(self._llm, "name", "unknown")
+
+    def set_llm(self, client: LLMClient) -> None:
+        """运行时替换模型客户端（界面上的"切换模型"落到这里）。
+
+        正在飞行中的调用已经拿到了旧引用，会用旧通道跑完——不中断它们，
+        只保证**之后的**简历用新通道。替换是引用赋值，GIL 下天然原子。
+        """
+        self._llm = client
+
+    @property
     def pending(self) -> int:
         """排队中 + 处理中的数量。"""
         return self._queue.qsize() + len(self._inflight)

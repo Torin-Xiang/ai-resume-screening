@@ -2,6 +2,7 @@
 
 import type {
   Job,
+  LlmSettings,
   Ranking,
   ResumeList,
   Rubric,
@@ -126,6 +127,13 @@ export const api = {
       `/api/jobs/${jobId}/resumes/text`,
       jsonInit('POST', { text, file_name: fileName }),
     ),
+
+  // —— 模型通道（全局设置，切换对之后处理的简历立即生效）——
+
+  getLlmSettings: () => request<LlmSettings>('/api/settings/llm'),
+
+  setLlmModel: (provider: string, model: string) =>
+    request<LlmSettings>('/api/settings/llm', jsonInit('POST', { provider, model })),
 
   /**
    * 导出 Excel。

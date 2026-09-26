@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { JobHeader } from './components/JobHeader'
 import { JobList } from './components/JobList'
+import { LlmSwitcher } from './components/LlmSwitcher'
 import { NewJobForm } from './components/NewJobForm'
 import { RankingBoard } from './components/RankingBoard'
 import { ResumeStatusPanel } from './components/ResumeStatusPanel'
@@ -11,7 +12,7 @@ import { RubricPanel } from './components/RubricPanel'
 import type { ReviewDecision } from './components/CandidateRow'
 import { Uploader } from './components/Uploader'
 import { useJobEvents } from './hooks/useJobEvents'
-import type { Job, Ranking, ResumeList, RubricVersion, UploadRejected } from './types'
+import type { Job, LlmSettings, Ranking, ResumeList, RubricVersion, UploadRejected } from './types'
 
 const EMPTY_RESUMES: ResumeList = { items: [], pending: 0 }
 const REFRESH_DEBOUNCE_MS = 150
@@ -33,6 +34,10 @@ export default function App() {
   const [exporting, setExporting] = useState(false)
   const [rejected, setRejected] = useState<UploadRejected[]>([])
 
+  // 模型通道是全局设置，与岗位无关：进页面拉一次，切换后用返回值更新
+  const [llm, setLlm] = useState<LlmSettings | null>(null)
+  const [switchingLlm, setSwitchingLlm] = useState(false)
+
   // 同一个岗位的三份数据（排名 / 简历 / 标准）一起重拉。抽成一个 token，
   // 是为了让"标准变了"也能触发重拉——只重拉排名和简历会让顶部一直显示旧版本号。
   const [reloadToken, setReloadToken] = useState(0)
@@ -49,6 +54,25 @@ export default function App() {
   const reportError = useCallback((cause: unknown) => {
     setError(cause instanceof Error ? cause.message : String(cause))
   }, [])
+
+  // 模型通道是全局设置，与岗位无关：进页面拉一次，切换后用返回值更新
+  useEffect(() => {
+    void api
+      .getLlmSettings()
+      .then(setLlm)
+      .catch((cause) => reportError(cause))
+  }, [reportError])
+
+  const handleSwitchLlm = async (provider: string, model: string) => {
+    setSwitchingLlm(true)
+    try {
+      setLlm(await api.setLlmModel(provider, model))
+    } catch (cause) {
+      reportError(cause)
+    } finally {
+      setSwitchingLlm(false)
+    }
+  }
 
   const loadJobs = useCallback(async (): Promise<Job[]> => {
     try {
@@ -258,6 +282,9 @@ export default function App() {
               rubric={rubric}
               connected={connected}
               exporting={exporting}
+              leading={
+                <LlmSwitcher settings={llm} switching={switchingLlm} onSelect={(provider, model) => void handleSwitchLlm(provider, model)} />
+              }
               onEditRubric={() => setShowRubric(true)}
               onExport={() => void handleExport()}
               onArchive={handleArchive}
@@ -276,7 +303,7 @@ export default function App() {
               onPaste={handlePaste}
             />
             <ResumeStatusPanel resumes={resumes} onRemove={handleRemoveResume} />
-            <RankingBoard ranking={ranking} onReview={handleReview} />
+            <RankingBoard ranking={ranking} onReview={handleReview} onRemove={handleRemoveResume} />
           </>
         )}
       </main>

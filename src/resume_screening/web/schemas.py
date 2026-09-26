@@ -276,3 +276,24 @@ class ReviewIn(BaseModel):
 class ReviewOut(BaseModel):
     resume_id: str
     hr_decision: str | None = None
+
+
+class LlmChoiceOut(BaseModel):
+    """界面"切换模型"下拉里的一个选项。"""
+
+    provider: str
+    model: str
+    label: str
+    needs_key: str = ""
+    available: bool = True
+
+
+class LlmSettingsIn(BaseModel):
+    provider: str
+    model: str | None = None
+
+
+class LlmSettingsOut(BaseModel):
+    provider: str
+    model: str = ""
+    choices: list[LlmChoiceOut] = Field(default_factory=list)

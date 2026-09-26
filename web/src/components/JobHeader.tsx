@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import type { Job, RubricVersion } from '../types'
 
 interface Props {
@@ -5,6 +7,8 @@ interface Props {
   rubric: RubricVersion | null
   connected: boolean
   exporting: boolean
+  /** actions 区最前面的一段全局控件（目前是模型通道切换）。 */
+  leading?: ReactNode
   onEditRubric: () => void
   onExport: () => void
   onArchive: () => void
@@ -22,6 +26,7 @@ export function JobHeader({
   rubric,
   connected,
   exporting,
+  leading,
   onEditRubric,
   onExport,
   onArchive,
@@ -42,6 +47,7 @@ export function JobHeader({
         </div>
       </div>
       <div className="job-header-actions">
+        {leading}
         <button type="button" className="btn" onClick={onEditRubric}>
           查看 / 调整标准
         </button>

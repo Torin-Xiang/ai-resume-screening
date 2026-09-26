@@ -25,7 +25,9 @@ dependencies = [
 dev = ["pytest>=8.0", "mypy>=1.10", "httpx>=0.27"]
 
 [project.scripts]
-resume-screen = "resume_screening.cli.main:app"
+# 必须指向 main 而不是 app：load_dotenv() 在 main() 里，
+# 指向 app 时控制台脚本会绕过它，.env 配了也不生效（实测踩过）。
+resume-screen = "resume_screening.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

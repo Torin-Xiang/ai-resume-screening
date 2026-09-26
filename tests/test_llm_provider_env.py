@@ -96,3 +96,32 @@ def test_screen_without_key_and_without_fake_env_fails_loudly(monkeypatch, no_ap
     )
 
     assert result.exit_code != 0
+
+
+def test_console_script_entry_point_loads_dotenv() -> None:
+    """控制台脚本必须指向 `main`，否则 `.env` 配了也不生效。
+
+    实际踩过的坑：`[project.scripts]` 原本写的是 `...cli.main:app`，
+    直接调用 Typer 应用对象，**绕过了 `main()` 里的 `load_dotenv()`**。
+    表现是"照文档把密钥写进 .env，跑起来却说缺密钥"。
+
+    之所以一直没暴露：此前所有实测都在 shell 里显式导出过变量
+    （`LLM_PROVIDER=fake resume-screen serve`），把这个问题盖住了。
+
+    测试只断言 pyproject 的声明（源码即事实来源）；`CliRunner` 走的是 `app`，
+    与真实入口不同，因此这条契约只能靠读配置来守。
+    """
+    import tomllib
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject.open("rb") as f:
+        scripts = tomllib.load(f)["project"]["scripts"]
+
+    target = scripts["resume-screen"]
+    assert target.endswith(":main"), (
+        f"resume-screen 入口指向 {target}，会绕过 load_dotenv()，.env 将不生效"
+    )
+    # 该入口必须真实存在，否则安装出的脚本一执行就 ImportError
+    from resume_screening.cli.main import main
+
+    assert callable(main)

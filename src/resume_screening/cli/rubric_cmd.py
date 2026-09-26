@@ -9,7 +9,7 @@ from pathlib import Path
 
 import typer
 
-from resume_screening.adapters.llm.factory import build_llm_client
+from resume_screening.adapters.llm.factory import PROVIDER_OPTION_HELP, build_llm_client
 from resume_screening.core.rubric import Rubric, validate_rubric
 from resume_screening.core.rubric_gen import draft_version, generate_rubric
 
@@ -25,8 +25,8 @@ def rubric_new(
     out: Path = typer.Option(Path("rubrics/rubric.json"), "--out", help="评分卡输出路径"),
     version: str = typer.Option(None, "--version", help="业务版本号，默认 日期-draft"),
     job_title: str = typer.Option("", "--job-title", help="岗位名称"),
-    provider: str | None = typer.Option(None, "--provider", help="模型 provider：qwen / fake（默认读 LLM_PROVIDER）"),
-    model: str = typer.Option(None, "--model", help="模型名，如 qwen-plus"),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_OPTION_HELP),
+    model: str = typer.Option(None, "--model", help="模型名，如 deepseek-chat / qwen-plus"),
 ) -> None:
     """从 JD 生成评分卡草稿（生成后需人工编辑口径与权重）。"""
     if not jd and not jd_file:

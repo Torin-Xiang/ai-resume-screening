@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 
 from resume_screening.adapters.exporters.excel import ExcelExporter
-from resume_screening.adapters.llm.factory import build_llm_client
+from resume_screening.adapters.llm.factory import PROVIDER_OPTION_HELP, build_llm_client
 from resume_screening.adapters.parsers.pdf_pymupdf import PdfPymupdfParser
 from resume_screening.core.pipeline import run_screen
 from resume_screening.core.review import apply_decisions, review_summary
@@ -24,8 +24,8 @@ def screen(
     out: Path = typer.Option(None, "--out", help="导出的 Excel 路径"),
     cache_dir: Path = typer.Option(Path("data/cache"), "--cache-dir", help="解析/提取缓存目录"),
     run_dir: Path = typer.Option(Path("data/runs"), "--run-dir", help="运行结果保存目录"),
-    provider: str | None = typer.Option(None, "--provider", help="模型 provider：qwen / fake（默认读 LLM_PROVIDER）"),
-    model: str = typer.Option(None, "--model", help="模型名，如 qwen-plus"),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_OPTION_HELP),
+    model: str = typer.Option(None, "--model", help="模型名，如 deepseek-chat / qwen-plus"),
     limit: int = typer.Option(None, "--limit", help="只处理前 N 份（调试用）"),
     no_cache: bool = typer.Option(False, "--no-cache", help="忽略缓存，强制重新解析提取"),
 ) -> None:

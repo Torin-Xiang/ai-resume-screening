@@ -29,6 +29,7 @@ from resume_screening.cli.serve_cmd import (
     ensure_port_free,
     lan_addresses,
     missing_api_key,
+    missing_key_help,
     preflight_warnings,
     resolve_settings,
 )
@@ -137,6 +138,43 @@ def test_missing_api_key_not_reported_for_fake_provider(monkeypatch: pytest.Monk
 def test_missing_api_key_false_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-not-a-real-key")
     assert missing_api_key("qwen") is False
+
+
+def test_missing_api_key_follows_the_active_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """密钥变量名由 provider 决定，不能写死。
+
+    本模块原本硬编码 `DASHSCOPE_API_KEY`。接入 DeepSeek 后，用户配好了
+    `LLM_API_KEY`，预检却仍判"缺密钥"并拒绝启动——对着一个配置完全正确的
+    用户报错，是最容易让人放弃的那类 bug。
+    """
+    monkeypatch.setenv("LLM_API_KEY", "sk-not-a-real-key")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    assert missing_api_key("deepseek") is False
+    assert missing_api_key("qwen") is True
+
+
+def test_missing_key_help_names_the_variable_of_the_active_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """提示里要写用户当前该配的那个变量，而不是永远那句 DASHSCOPE_API_KEY。"""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    assert "LLM_API_KEY" in missing_key_help("deepseek")
+    assert "DASHSCOPE_API_KEY" in missing_key_help("qwen")
+    # 两条出路都要给出：补密钥，或者先用离线模式看界面
+    for provider in ("deepseek", "qwen"):
+        assert "LLM_PROVIDER=fake" in missing_key_help(provider)
+
+
+def test_missing_key_help_points_at_provider_when_it_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """provider 写错时不该说"缺密钥"——那是两码事，会把排查引到错误方向。"""
+    help_text = missing_key_help("typo-provider")
+
+    assert "typo-provider" in help_text
+    assert "LLM_PROVIDER" in help_text
+    assert "DASHSCOPE_API_KEY" not in help_text
 
 
 def test_missing_key_stops_serve_with_actionable_message(monkeypatch: pytest.MonkeyPatch) -> None:

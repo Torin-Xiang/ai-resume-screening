@@ -127,22 +127,45 @@ def preflight_warnings(ui_dist: Path | None = None) -> list[str]:
 
 
 def missing_api_key(provider: str | None = None) -> bool:
-    """真实模型通道是否缺密钥。
+    """当前 provider 是否缺密钥。
 
-    实测过一次教训：缺密钥时服务其实是**起不来**的（`QwenClient` 构造即抛错），
+    实测过一次教训：缺密钥时服务其实是**起不来**的（客户端构造即抛错），
     但旧文案写的是"上传简历后会处理失败"，于是用户先看到"已启动"、
     紧接着一个堆栈——两句话自相矛盾，人只会以为程序坏了。
     所以在启动前就问清楚，把话一次说对。
+
+    这里刻意**不在本模块写死变量名**：密钥叫什么、要不要密钥都由 provider 决定
+    （qwen 要 `DASHSCOPE_API_KEY`、deepseek 要 `LLM_API_KEY`、fake 不要）。
+    曾经这里写死 `DASHSCOPE_API_KEY`，接入第二个厂商时就会对着配好的用户
+    误报"缺密钥"。
     """
-    provider = (provider or os.getenv("LLM_PROVIDER") or "qwen").lower()
-    return provider != "fake" and not os.getenv("DASHSCOPE_API_KEY")
+    from resume_screening.adapters.llm.factory import has_api_key
+
+    return not has_api_key(provider)
 
 
-MISSING_KEY_HELP = (
-    "缺少 DASHSCOPE_API_KEY，服务无法处理简历。二选一：\n"
-    "      1) 在项目根目录建 .env（可复制 .env.example），填入 DASHSCOPE_API_KEY=你的密钥\n"
-    "      2) 只想先看看界面：启动时加上 LLM_PROVIDER=fake（离线，不调用模型）"
-)
+def missing_key_help(provider: str | None = None) -> str:
+    """缺密钥时给用户看的出路，按当前 provider 生成。"""
+    from resume_screening.adapters.llm.factory import env_names_for, resolve_provider
+
+    resolved = resolve_provider(provider)
+    names = env_names_for(resolved)
+    if not names:
+        # 未知 provider：真正的报错交给 build_llm_client，它会列出合法取值
+        return (
+            f"未知的模型 provider：{resolved}。请检查 .env 中的 LLM_PROVIDER，"
+            "或在启动时用 LLM_PROVIDER=fake 先看界面"
+        )
+    name = names[0]
+    return (
+        f"缺少 {name}，服务无法处理简历。二选一：\n"
+        f"      1) 在项目根目录建 .env（可复制 .env.example），填入 {name}=你的密钥\n"
+        "      2) 只想先看看界面：启动时加上 LLM_PROVIDER=fake（离线，不调用模型）"
+    )
+
+
+#: 兼容旧引用：默认 provider（qwen）下的提示文案
+MISSING_KEY_HELP = missing_key_help("qwen")
 
 
 def serve(
@@ -177,7 +200,7 @@ def serve(
 
     # 启动前把"起不来"的原因说清楚，别等 uvicorn 把堆栈甩出来
     if missing_api_key():
-        typer.secho(f"✗ {MISSING_KEY_HELP}", fg=typer.colors.RED, err=True)
+        typer.secho(f"✗ {missing_key_help()}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
     for warning in preflight_warnings(ui_dist=UI_DIST):

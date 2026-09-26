@@ -35,7 +35,7 @@ def version() -> None:
 def main() -> None:  # pragma: no cover
     from dotenv import load_dotenv
 
-    load_dotenv()  # 读取 .env 中的 DASHSCOPE_API_KEY
+    load_dotenv()  # 读取 .env：模型密钥（LLM_API_KEY / DASHSCOPE_API_KEY）与 provider 配置
     app()
 
 

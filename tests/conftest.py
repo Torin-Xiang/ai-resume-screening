@@ -20,6 +20,29 @@ except ImportError:  # pragma: no cover
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _no_real_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清空真实模型凭据，保证任何一个用例都不可能联网调用真实模型。
+
+    必要性：项目根目录存在 `.env`（装着真实密钥）。只要有人不小心在测试里
+    调用 `load_dotenv()`，或者将来把 dotenv 加载提前到 import 期，凭据就会进入
+    测试进程；而 `build_llm_client()` 在 provider 未指定时会按环境变量推断，
+    于是"本该用 Fake 的用例"会真的去打外部模型——一次全量测试就是几十次真实请求。
+
+    宁可每个用例多删 6 个变量，也不能让测试有花钱或泄露凭据的可能。
+    """
+    for name in (
+        "LLM_PROVIDER",
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _white_png(width: int = 400, height: int = 500) -> bytes:
     """生成一张纯白灰度 PNG，用于模拟"扫描件"（整页只有图片，无文本层）。"""
     raw = b"".join(b"\x00" + b"\xff" * width for _ in range(height))

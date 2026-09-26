@@ -7,6 +7,10 @@
 # 模板可入库，真实 .env 永不入库
 !.env.example
 *.local
+# 任意以 .env 结尾的密钥文件（如手工命名的「API Key.env」）。
+# 只写 .env / .env.* 挡不住这类命名——实测 `git check-ignore` 判定为未忽略，
+# 意味着密钥会被直接提交进仓库。宁可规则宽一点，也不能漏。
+*.env
 
 # Python
 __pycache__/

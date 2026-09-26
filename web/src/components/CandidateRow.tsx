@@ -8,6 +8,7 @@ export type ReviewDecision = 'agree' | 'disagree' | 'clear'
 interface Props {
   item: RankingItem
   onReview: (resumeId: string, decision: ReviewDecision) => void
+  onRemove: (resumeId: string) => void
 }
 
 function judgementClass(judgement: Judgement): string {
@@ -51,9 +52,18 @@ function DimensionRow({ dimension }: { dimension: Dimension }) {
  * 展开后能看到每条维度的判定与**原文引用**——这是"结论可核对"的落点，
  * 也是 HR 敢不敢信系统的分界线。
  */
-export function CandidateRow({ item, onReview }: Props) {
+export function CandidateRow({ item, onReview, onRemove }: Props) {
   const [open, setOpen] = useState(false)
   const decided = item.hr_decision
+
+  const handleRemove = () => {
+    const name = item.candidate_name || item.file_name
+    // 删除前必须确认：这一步把简历连同结论一起移出岗位，不可撤销
+    if (!window.confirm(`删除「${name}」？\n\n会把这份简历和它的评分结论一起移出当前岗位，不可恢复。`)) {
+      return
+    }
+    onRemove(item.resume_id)
+  }
 
   return (
     <li className={`row${open ? ' open' : ''}`}>
@@ -85,6 +95,9 @@ export function CandidateRow({ item, onReview }: Props) {
             onClick={() => onReview(item.resume_id, decided === 'disagree' ? 'clear' : 'disagree')}
           >
             不同意
+          </button>
+          <button type="button" className="btn btn-xs btn-ghost" onClick={handleRemove} title="把这份简历移出当前岗位">
+            删除
           </button>
         </div>
       </div>

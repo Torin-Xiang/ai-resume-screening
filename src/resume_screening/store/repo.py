@@ -274,9 +274,19 @@ def set_resume_status(
 
 
 def remove_job_resume(db: Database, job_id: str, resume_id: str) -> bool:
+    """把一份简历从岗位上移除。
+
+    必须**连同结论一起删**：排名读的是 `results` 表（不关联 job_resumes），
+    只删 job_resumes 的话，列表里看不见了、排名里却还在——HR 会以为
+    删除没生效。解析缓存与上传文件保留：同一份内容再传进来时直接命中
+    缓存，不用重新解析。
+    """
     with db.tx() as conn:
         cur = conn.execute(
             "DELETE FROM job_resumes WHERE job_id = ? AND resume_id = ?", (job_id, resume_id)
+        )
+        conn.execute(
+            "DELETE FROM results WHERE job_id = ? AND resume_id = ?", (job_id, resume_id)
         )
     return cur.rowcount > 0
 

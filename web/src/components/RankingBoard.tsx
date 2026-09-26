@@ -4,6 +4,7 @@ import { CandidateRow, type ReviewDecision } from './CandidateRow'
 interface Props {
   ranking: Ranking | null
   onReview: (resumeId: string, decision: ReviewDecision) => void
+  onRemove: (resumeId: string) => void
 }
 
 /** 每个分组的说明——让 HR 明白"待确认"不是系统偷懒，而是一份待办清单。 */
@@ -19,7 +20,7 @@ const GROUP_NOTES: Record<string, string> = {
  * 「待确认」必须和「不推荐」分开：简历里没写到的人如果被混进不推荐，
  * 就成了最危险的误伤——那正是「未提及不得淘汰」要防的事。
  */
-export function RankingBoard({ ranking, onReview }: Props) {
+export function RankingBoard({ ranking, onReview, onRemove }: Props) {
   if (!ranking || ranking.total === 0) {
     return (
       <div className="empty">
@@ -46,7 +47,12 @@ export function RankingBoard({ ranking, onReview }: Props) {
           ) : (
             <ul className="rows">
               {group.items.map((item) => (
-                <CandidateRow key={item.resume_id} item={item} onReview={onReview} />
+                <CandidateRow
+                  key={item.resume_id}
+                  item={item}
+                  onReview={onReview}
+                  onRemove={onRemove}
+                />
               ))}
             </ul>
           )}

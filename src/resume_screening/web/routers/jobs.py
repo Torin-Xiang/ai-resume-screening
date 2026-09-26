@@ -195,15 +195,17 @@ async def propose_rubric_change(
 
     三道闸的第一、二道（产品方案 §6.4）：先说清改了什么、会影响到谁，
     再由 HR 决定要不要生效。
+
+    触碰合规红线时**返回 200 + refused=true**，而不是 4xx：那是产品对
+    "这个要求不能做"的正常回答，界面要把它显示在输入框旁边给出路，
+    而不是当成一次请求失败丢到页面顶部（产品方案 §6.5）。
+    422 只留给真正的问题：原话为空、清单与当前标准对不上。
     """
     jobs_service.require_job(db, job_id)
     try:
         outcome = await rubric_chat.propose(
             db=db, job_id=job_id, utterance=payload.utterance, llm=llm
         )
-    except rubric_chat.UtteranceRejected as exc:
-        # 合规红线：给出"拒绝 + 理由"，不是系统故障，所以用 422 并原样带上说明
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RubricPatchError as exc:
         raise HTTPException(status_code=422, detail=f"这次改动无法执行：{exc}") from exc
 

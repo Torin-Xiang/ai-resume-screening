@@ -24,6 +24,8 @@ from fastapi.testclient import TestClient
 from conftest import write_pdf, write_scanned_pdf
 from resume_screening.core.llm import LLMResponse, Usage
 from resume_screening.core.prompts import EXTRACT_SYSTEM, PROPOSE_SYSTEM, SCORE_SYSTEM
+from resume_screening.store import repo
+from resume_screening.store.db import Database
 from test_m6_workbench import (
     EXTRACT_FIELDS,
     SCORE_ITEM,
@@ -120,17 +122,38 @@ def get_rubric(client: TestClient, job_id: str) -> dict:
     ],
 )
 def test_protected_attribute_request_is_refused(tmp_path: Path, utterance: str) -> None:
-    """产品方案 §6.5：自然语言入口的合规红线必须同样生效。"""
+    """产品方案 §6.5：自然语言入口的合规红线必须同样生效。
+
+    断言的是 **200 + refused**，不是 4xx。这不是"请求出错"，而是产品对这个要求的
+    正常回答；用它和"系统故障"区分开，界面才能把理由摆在输入框旁边而不是页面顶部。
+    """
     llm = ProposalLLM()
     with make_client(tmp_path, llm=llm) as (client, _):
         job_id = create_job(client, rubric=make_rubric_dict("v1"))
         resp = propose(client, job_id, utterance)
 
-    assert resp.status_code == 422, resp.text
-    detail = resp.json()["detail"]
-    assert "合规" in detail
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["refused"] is True
+    assert not body["patches"], "被拒的要求不能带出任何变更"
+    reason = body["refused_reason"]
+    assert "合规红线" in reason
     # 必须给出去路，而不是单说"不行"——否则 HR 只会换个说法再试一次
-    assert "能力或经验" in detail
+    assert "能力或经验" in reason
+    assert reason in "".join(body["impact"]["notes"]), "理由也要出现在影响说明里"
+
+
+def test_refused_utterance_is_still_archived(tmp_path: Path) -> None:
+    """被拒的提案也要存档：「我提过、被拒了、理由是什么」是复盘时要看的东西。"""
+    llm = ProposalLLM()
+    with make_client(tmp_path, llm=llm) as (client, _):
+        job_id = create_job(client, rubric=make_rubric_dict("v1"))
+        body = propose(client, job_id, "只要男生").json()
+
+    record = repo.get_proposal(Database(tmp_path / "appdata"), body["proposal_id"])
+    assert record is not None
+    assert record.utterance == "只要男生"
+    assert "合规红线" in record.payload["refused_reason"]
 
 
 def test_refusal_happens_before_calling_the_model(tmp_path: Path) -> None:

@@ -26,6 +26,7 @@ from .openai_compat import GENERIC_ENV_KEY_NAMES, OpenAICompatClient, resolve_ap
 
 PROVIDER_QWEN = "qwen"
 PROVIDER_FAKE = "fake"  # 仅供测试与离线演练
+PROVIDER_SCRIPTED = "scripted"  # 离线脚本模型：规则驱动，看输出形态用
 PROVIDER_DEEPSEEK = "deepseek"
 PROVIDER_OPENAI = "openai"  # 通用 OpenAI 兼容（自建网关 / vLLM / 其他厂商）
 
@@ -39,11 +40,13 @@ QWEN_PROVIDERS = frozenset({PROVIDER_QWEN, "dashscope", "qwen-plus", "qwen-max",
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
-KNOWN_PROVIDERS = sorted(GENERIC_PROVIDERS | QWEN_PROVIDERS | {PROVIDER_FAKE})
+KNOWN_PROVIDERS = sorted(GENERIC_PROVIDERS | QWEN_PROVIDERS | {PROVIDER_FAKE, PROVIDER_SCRIPTED})
 
 #: 各 CLI 命令 `--provider` 选项共用的帮助文案。
 #: 抽成常量是为了避免两处命令各写一份、接入新厂商时只改一处而漂移。
-PROVIDER_OPTION_HELP = "模型 provider：deepseek / qwen / openai / fake（默认读 LLM_PROVIDER）"
+PROVIDER_OPTION_HELP = (
+    "模型 provider：deepseek / qwen / openai / fake / scripted（默认读 LLM_PROVIDER）"
+)
 
 
 def resolve_provider(provider: str | None = None) -> str:
@@ -64,7 +67,7 @@ def env_names_for(provider: str | None = None) -> tuple[str, ...]:
     `build_llm_client`——它才是真正装配客户端、能说清合法取值的地方。
     """
     resolved = resolve_provider(provider)
-    if resolved == PROVIDER_FAKE:
+    if resolved in (PROVIDER_FAKE, PROVIDER_SCRIPTED):
         return ()
     if resolved in QWEN_PROVIDERS:
         from .qwen import ENV_KEY_NAMES
@@ -98,6 +101,11 @@ def build_llm_client(
         from .fake import FakeLLMClient
 
         return FakeLLMClient(model=model or "fake-1", **kwargs)
+
+    if resolved == PROVIDER_SCRIPTED:
+        from .scripted import ScriptedLLMClient
+
+        return ScriptedLLMClient(model=model or "scripted-1", **kwargs)
 
     if resolved in QWEN_PROVIDERS:
         from .qwen import DEFAULT_MODEL, QwenClient

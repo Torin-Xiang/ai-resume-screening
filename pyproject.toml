@@ -16,10 +16,13 @@ dependencies = [
     "openai>=1.40",
     "python-dotenv>=1.0",
     "tenacity>=9.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "mypy>=1.10"]
+dev = ["pytest>=8.0", "mypy>=1.10", "httpx>=0.27"]
 
 [project.scripts]
 resume-screen = "resume_screening.cli.main:app"

@@ -19,6 +19,8 @@ async function handle<T>(resp: Response): Promise<T> {
     } catch {
       /* 非 JSON 响应，保留状态码文案 */
     }
+    // 失败留在控制台一份，便于对着 DevTools 定位；同时抛出去让界面显示错误横幅
+    console.error('[api] 请求失败', resp.status, resp.url, detail)
     throw new Error(detail)
   }
   if (resp.status === 204) return undefined as T

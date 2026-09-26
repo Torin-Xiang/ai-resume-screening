@@ -67,6 +67,7 @@ export default function App() {
   }, [loadJobs])
 
   // —— 切换岗位：重新拉取该岗位的排名、简历与标准 ——
+  // 三个请求各自独立处理：任何一个失败都不该让另外两个的数据也显示不出来
   useEffect(() => {
     if (!activeJobId) {
       setRanking(null)
@@ -74,22 +75,27 @@ export default function App() {
       setRubric(null)
       return
     }
+    const jobId = activeJobId
     let cancelled = false
-    void (async () => {
-      const [nextRanking, nextResumes, nextRubric] = await Promise.all([
-        api.getRanking(activeJobId).catch(() => null),
-        api.listResumes(activeJobId).catch(() => EMPTY_RESUMES),
-        api.getRubric(activeJobId).catch(() => null),
-      ])
-      if (cancelled) return
-      setRanking(nextRanking)
-      setResumes(nextResumes)
-      setRubric(nextRubric)
-    })()
+
+    const load = async <T,>(promise: Promise<T>, apply: (value: T) => void) => {
+      try {
+        const value = await promise
+        if (!cancelled) apply(value)
+      } catch (cause) {
+        // 不静默吞错：加载失败必须让用户看见，否则界面会呈现出"没有数据"的假象
+        if (!cancelled) reportError(cause)
+      }
+    }
+
+    void load(api.getRanking(jobId), setRanking)
+    void load(api.listResumes(jobId), setResumes)
+    void load(api.getRubric(jobId), setRubric)
+
     return () => {
       cancelled = true
     }
-  }, [activeJobId])
+  }, [activeJobId, reportError])
 
   // —— 事件驱动的刷新（后端已对排名推送做过合并，这里再做一层防抖）——
   const refreshTimer = useRef<number | null>(null)

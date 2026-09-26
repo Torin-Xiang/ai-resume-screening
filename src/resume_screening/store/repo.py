@@ -18,6 +18,7 @@ from .entities import (
     Job,
     JobResume,
     JobStatus,
+    ProposalRecord,
     ResumeStatus,
     RubricVersionInfo,
     now_iso,
@@ -376,3 +377,60 @@ def count_results_by_verdict(db: Database, job_id: str, rubric_id: str) -> dict[
 def iter_all_resume_ids(db: Database) -> Iterable[str]:
     for row in db.query("SELECT resume_id FROM resume_docs"):
         yield row["resume_id"]
+
+
+# ——————————————————————— 改标准提案 ———————————————————————
+
+
+def put_proposal(
+    db: Database,
+    *,
+    job_id: str,
+    utterance: str,
+    base_rubric_id: str,
+    payload: dict[str, Any],
+    impact: dict[str, Any],
+) -> ProposalRecord:
+    proposal_id = new_id("prop_")
+    ts = now_iso()
+    db.execute(
+        "INSERT INTO rubric_proposals"
+        " (proposal_id, job_id, utterance, base_rubric_id, payload, impact, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            proposal_id,
+            job_id,
+            utterance,
+            base_rubric_id,
+            json.dumps(payload, ensure_ascii=False),
+            json.dumps(impact, ensure_ascii=False),
+            ts,
+        ),
+    )
+    return ProposalRecord(
+        proposal_id=proposal_id,
+        job_id=job_id,
+        utterance=utterance,
+        base_rubric_id=base_rubric_id,
+        payload=payload,
+        impact=impact,
+        created_at=ts,
+    )
+
+
+def _row_to_proposal(row: sqlite3.Row) -> ProposalRecord:
+    return ProposalRecord(
+        proposal_id=row["proposal_id"],
+        job_id=row["job_id"],
+        utterance=row["utterance"],
+        base_rubric_id=row["base_rubric_id"],
+        payload=json.loads(row["payload"]),
+        impact=json.loads(row["impact"]),
+        created_at=row["created_at"],
+    )
+
+
+def get_proposal(db: Database, proposal_id: str) -> ProposalRecord | None:
+    row = db.query_one("SELECT * FROM rubric_proposals WHERE proposal_id = ?", (proposal_id,))
+    return _row_to_proposal(row) if row else None
+

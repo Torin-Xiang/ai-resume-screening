@@ -16,6 +16,7 @@ from ...store.db import Database
 from ...store.entities import PENDING_STATUSES
 from ..deps import get_db, get_worker
 from ..schemas import (
+    PasteTextIn,
     ResumeListOut,
     ResumeOut,
     UploadItemOut,
@@ -69,6 +70,36 @@ async def upload_resumes(
         worker.enqueue(job_id, result.resume_id)
 
     return UploadResponse(accepted=len(items), items=items, rejected=rejected)
+
+
+@router.post("/text", response_model=UploadItemOut, status_code=status.HTTP_202_ACCEPTED)
+async def paste_resume_text(
+    job_id: str,
+    payload: PasteTextIn,
+    db: Database = Depends(get_db),
+    worker=Depends(get_worker),
+) -> UploadItemOut:
+    """粘贴文本兜底：扫描件没有文本层时给 HR 的出路（产品方案 §6.1、P0#9）。
+
+    这是"绝不允许静默跳过"的落地方式——解析失败的人必须有一条能走到排名里的路，
+    否则 HR 会以为系统看过并放过了他。粘完立即入队，与上传同样的"上传即处理"。
+    """
+    jobs_service.require_job(db, job_id)
+    try:
+        result = ingest_service.ingest_text(
+            db, job_id=job_id, text=payload.text, file_name=payload.file_name
+        )
+    except ingest_service.UnsupportedFormat as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    worker.enqueue(job_id, result.resume_id)
+    return UploadItemOut(
+        resume_id=result.resume_id,
+        file_name=result.file_name,
+        status="queued",
+        is_new=result.is_new,
+        origin=result.origin,
+    )
 
 
 @router.get("", response_model=ResumeListOut)

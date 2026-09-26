@@ -98,6 +98,35 @@ def _hit_level(item: dict[str, Any], judgement: Judgement) -> float:
     return lv
 
 
+def verdict_from_dimensions(
+    dimensions: list[DimensionResult],
+) -> tuple[ScreeningVerdict, list[str]]:
+    """由各维度判定汇总结论，返回 (结论, 需要插到前面的说明)。
+
+    抽成独立函数的原因：**改动标准前的影响预估**（技术方案 §7 第②段）
+    必须复用同一套分组逻辑。如果那边另写一份，就会出现"预估说会升到推荐、
+    实际重排后没有"这种无法解释的偏差，而 HR 正是靠这个预估决定要不要确认改动。
+    返回 notes 而不是直接改对象，是为了让调用方决定插到哪里。
+    """
+    blocking = [
+        d for d in dimensions if d.kind == "hard_filter" and d.judgement is Judgement.NOT_SATISFIED
+    ]
+    unclear = [
+        d
+        for d in dimensions
+        if d.kind == "hard_filter" and d.judgement in (Judgement.NOT_MENTIONED, Judgement.UNKNOWN)
+    ]
+
+    if blocking:
+        return ScreeningVerdict.REJECT, ["硬门槛未满足：" + "、".join(d.name for d in blocking)]
+    if unclear:
+        return (
+            ScreeningVerdict.NEEDS_REVIEW,
+            ["存在无法判定的硬门槛，需人工确认：" + "、".join(d.name for d in unclear)],
+        )
+    return ScreeningVerdict.PASS, []
+
+
 def evaluate_candidate(
     doc: ResumeDocument,
     rubric: Rubric,
@@ -215,22 +244,9 @@ def evaluate_candidate(
         )
 
     # ③ 汇总结论：只有明确"不满足"的硬门槛才能淘汰
-    blocking = [d for d in result.dimensions if d.kind == "hard_filter" and d.judgement is Judgement.NOT_SATISFIED]
-    unclear = [
-        d
-        for d in result.dimensions
-        if d.kind == "hard_filter" and d.judgement in (Judgement.NOT_MENTIONED, Judgement.UNKNOWN)
-    ]
-
-    if blocking:
-        result.verdict = ScreeningVerdict.REJECT
-        result.hard_filter_blocked = True
-        result.notes.insert(0, "硬门槛未满足：" + "、".join(d.name for d in blocking))
-    elif unclear:
-        result.verdict = ScreeningVerdict.NEEDS_REVIEW
-        result.notes.insert(0, "存在无法判定的硬门槛，需人工确认：" + "、".join(d.name for d in unclear))
-    else:
-        result.verdict = ScreeningVerdict.PASS
+    result.verdict, notes = verdict_from_dimensions(result.dimensions)
+    result.hard_filter_blocked = result.verdict is ScreeningVerdict.REJECT
+    result.notes[:0] = notes
 
     result.score = round(max(0.0, min(score, rubric.max_possible_score())), 2)
     return result

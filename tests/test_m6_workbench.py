@@ -435,8 +435,15 @@ def test_upload_ranks_end_to_end(tmp_path: Path) -> None:
 
 
 def test_upload_returns_before_processing_finishes(tmp_path: Path) -> None:
-    """上传必须立刻返回：同步处理会让十份简历直接超时，用户看到转圈然后失败。"""
-    slow = ScriptedLLM(latency=0.4)
+    """上传必须立刻返回：同步处理会让十份简历直接超时，用户看到转圈然后失败。
+
+    断言方式刻意是**相对**的：拿"上传耗时"和注入的模型延迟比，而不是和某个
+    绝对秒数比。写死 0.3 秒曾经在机器变忙时误报——测试想验的是"上传没有等待处理"，
+    不是"这台机器有多快"。模型延迟给足 2 秒，门槛就有足够余量：
+    只要处理被放进请求里，耗时必然 ≥2 秒，一定被抓到。
+    """
+    latency = 2.0
+    slow = ScriptedLLM(latency=latency)
     with make_client(tmp_path, llm=slow) as (client, _):
         job_id = create_job(client, rubric=make_rubric_dict("v1"))
         pdf = write_pdf(tmp_path / "a.pdf", [*_resume_items()])
@@ -446,7 +453,9 @@ def test_upload_returns_before_processing_finishes(tmp_path: Path) -> None:
         elapsed = time.time() - started
 
         assert body["accepted"] == 1
-        assert elapsed < 0.3, f"上传接口耗时 {elapsed:.2f}s，说明处理被放在请求内了"
+        assert elapsed < latency / 2, (
+            f"上传接口耗时 {elapsed:.2f}s，已接近模型延迟 {latency}s，说明处理被放在请求内了"
+        )
         # 此刻确实还没处理完
         assert client.get(f"/api/jobs/{job_id}/ranking").json()["pending"] == 1
         wait_settled(client, job_id)

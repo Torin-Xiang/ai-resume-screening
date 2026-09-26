@@ -81,7 +81,96 @@ class RescoreStatsOut(BaseModel):
     llm_tokens: int = 0
 
 
+# ——————————————— 对话式改标准（技术方案 §7）———————————————
+
+
+class RubricProposeIn(BaseModel):
+    utterance: str = Field(..., min_length=1, description="HR 的原话，例如「AI 项目经验改成必须项」")
+
+
+class PatchOut(BaseModel):
+    """一条变更。`description` 是给 HR 看的一行说明，前端直接渲染。"""
+
+    index: int
+    op: str
+    kind: str
+    target_id: str
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    reason: str = ""
+    description: str = ""
+
+
+class ImpactMoveOut(BaseModel):
+    resume_id: str
+    file_name: str
+    from_verdict: str
+    to_verdict: str | None = None
+    from_score: float = 0
+    to_score: float | None = None
+    note: str = ""
+
+
+class ImpactOut(BaseModel):
+    """对现有排名的影响。
+
+    `exact=False` 时**不要**把 counts_after 当成结论展示：新增维度或口径变化
+    无法从旧结论推算，必须等确认后重排。宁可说"算不准"，也不给假数字。
+    """
+
+    total: int = 0
+    not_scored: int = 0
+    exact: bool = True
+    unknown_candidates: int = 0
+    changed: int = 0
+    counts_before: dict[str, int] = Field(default_factory=dict)
+    counts_after: dict[str, int] = Field(default_factory=dict)
+    moves: list[ImpactMoveOut] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class RubricProposeOut(BaseModel):
+    proposal_id: str
+    utterance: str
+    summary: str = ""
+    refused: bool = False
+    refused_reason: str = ""
+    patches: list[PatchOut] = Field(default_factory=list)
+    impact: ImpactOut = Field(default_factory=ImpactOut)
+
+
+class RubricApplyIn(BaseModel):
+    proposal_id: str
+    accepted: list[int] | None = Field(
+        None, description="采纳的变更序号；不传表示全部采纳（产品方案 §6.4 的「确认生效」）"
+    )
+
+
+class RubricApplyOut(BaseModel):
+    rubric_id: str
+    version: str
+    applied: int = 0
+    rescored: int = 0
+    llm_calls: int = 0
+
+
+class RubricRollbackIn(BaseModel):
+    rubric_id: str
+    rescore: bool = True
+
+
 # ——————————————————— 简历与上传 ———————————————————
+
+
+class PasteTextIn(BaseModel):
+    """扫描件兜底：HR 手工粘贴简历文本（产品方案 §6.1、P0#9）。
+
+    不做 OCR 是刻意的选择：粘贴一次即可，而且粘进来的是 HR 亲自确认过的内容，
+    不存在"OCR 认错了还查不出来"的风险。
+    """
+
+    text: str = Field(..., min_length=1, description="简历正文，直接粘贴")
+    file_name: str = Field("粘贴的简历", description="便于在列表里认出来，例如候选人姓名")
 
 
 class UploadItemOut(BaseModel):

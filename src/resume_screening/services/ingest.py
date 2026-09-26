@@ -97,3 +97,59 @@ def ingest_path(
     if not src.is_file():
         raise FileNotFoundError(f"文件不存在：{src}")
     return ingest_upload(db, job_id=job_id, file_name=src.name, content=src.read_bytes(), origin=origin)
+
+
+ORIGIN_PASTE = "paste"
+"""来源标记：HR 手工粘贴的简历文本（扫描件兜底，产品方案 §6.1）。"""
+
+
+def ingest_text(
+    db: Database, *, job_id: str, text: str, file_name: str = "粘贴的简历"
+) -> IngestedResume:
+    """把 HR 粘贴的简历文本入库，**仍然落成文件**。
+
+    为什么不只存数据库：`requeue_stuck` 在进程重启后要能重新处理，
+    而重新处理需要拿到内容本身。把文本写成文件后，两条来源（上传 / 粘贴）
+    在 worker 眼里只有一个差别——读文件还是读文本——其余完全一致，
+    不会因为多了"粘贴"这条路就长出第二套处理逻辑。
+
+    命名同样按内容 hash：同一段文本粘两次不会重复计费（与上传一致）。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        raise UnsupportedFormat("粘贴的内容为空")
+
+    # 显示名原样保留：HR 把它当"这份是谁"的记号来用，不该被系统加上 .txt 之类的后缀。
+    # 扩展名只是**存储**的需要，两者不必一致。
+    display_name = (file_name or "").strip() or "粘贴的简历"
+
+    uploads = db.uploads_dir
+    tmp = uploads / f".paste-{uuid4().hex}.txt"
+    tmp.write_text(stripped, encoding="utf-8")
+    try:
+        resume_id = resume_id_of(tmp)
+        final = uploads / f"{resume_id}.txt"
+        if final.exists():
+            tmp.unlink()
+        else:
+            tmp.replace(final)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    is_new = repo.upsert_job_resume(
+        db,
+        job_id=job_id,
+        resume_id=resume_id,
+        file_name=display_name,
+        stored_path=str(final),
+        origin=ORIGIN_PASTE,
+        status=ResumeStatus.QUEUED.value,
+    )
+    return IngestedResume(
+        resume_id=resume_id,
+        file_name=display_name,
+        stored_path=str(final),
+        is_new=is_new,
+        origin=ORIGIN_PASTE,
+    )

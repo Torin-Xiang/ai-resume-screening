@@ -36,6 +36,49 @@ def test_clean_text_passes() -> None:
     ensure_clean("候选人须独立训练或微调过模型，并有过 RAG 上线经验")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "不要某省的",
+        "不要河南的",
+        "只要北京人",
+        "限本市户籍",
+        "江苏人优先",
+        "北方人不太合适",
+        "不要老乡太多的地方的人",
+    ],
+)
+def test_discrimination_by_region_wording_is_detected(text: str) -> None:
+    """按省份/城市排除是地域歧视最常见的说法，却一个"籍贯"字样都不含。
+
+    这条最初漏了：只匹配"籍贯/户籍/户口/本地人"这类明写词，
+    于是"不要某省的"会一路绿灯走到模型那里。属于产品方案 §6.5 说的迂回表达。
+    """
+    with pytest.raises(ComplianceViolation):
+        ensure_clean(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "工作地点北京，需要能到岗办公",
+        "要求本市有稳定住所并能正常通勤",
+        "不要没有经验的人",
+        "需要 3 年以上开发经验",
+        "只要有过 RAG 上线经验的人",
+        "优先考虑有大厂经历的人",
+    ],
+)
+def test_location_requirements_are_not_false_positives(text: str) -> None:
+    """工作地点要求是合法的，绝不能跟着被拦掉。
+
+    上面那条地域规则必须和"歧视性动词 + 地理词 + 人的指代"绑在一起判定；
+    一旦放宽成"出现省/市就拦"，正常的招聘要求会被大批误伤，
+    然后 HR 会开始绕过这个入口——比漏判更糟。
+    """
+    ensure_clean(text)
+
+
 def _expect_compliance_block(fn) -> None:
     """pydantic 会把 ValueError 包装成 ValidationError（其本身也是 ValueError 子类）。"""
     with pytest.raises(ValueError) as exc:

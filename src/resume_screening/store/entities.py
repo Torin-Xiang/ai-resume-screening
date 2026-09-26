@@ -103,3 +103,21 @@ class ResumeDocRecord:
     doc_payload: dict[str, Any]
     parse_status: str
     created_at: str = ""
+
+
+@dataclass
+class ProposalRecord:
+    """一次"用自然语言改标准"的完整记录（技术方案 §7）。
+
+    `impact` 与 `payload` 一起存，是为了在 HR 回过头来看时能回答
+    "当时告诉我会影响 3 个人，后来到底是哪 3 个"——只存结论不存依据，
+    追溯就变成一句空话。
+    """
+
+    proposal_id: str
+    job_id: str
+    utterance: str
+    base_rubric_id: str
+    payload: dict[str, Any]
+    impact: dict[str, Any]
+    created_at: str = ""

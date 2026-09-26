@@ -93,6 +93,22 @@ CREATE TABLE IF NOT EXISTS results (
   PRIMARY KEY (job_id, resume_id, rubric_id)
 );
 CREATE INDEX IF NOT EXISTS idx_results_lookup ON results(job_id, rubric_id);
+
+-- 自然语言改标准的提案（技术方案 §7）。
+-- 落库而不是让前端把清单原样传回来，原因有二：
+-- 1.「部分采纳」要按序号取子集，序号必须指向服务端可复现的那份清单；
+-- 2. 提案是"谁在什么标准基础上提了什么要求"的记录，标准可追溯不只指版本号，
+--    还包括"这一版是怎么改出来的"（产品方案 §6.4）。
+CREATE TABLE IF NOT EXISTS rubric_proposals (
+  proposal_id    TEXT PRIMARY KEY,
+  job_id         TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+  utterance      TEXT NOT NULL,
+  base_rubric_id TEXT NOT NULL,
+  payload        TEXT NOT NULL,
+  impact         TEXT NOT NULL,
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_proposals_job ON rubric_proposals(job_id, created_at);
 """
 
 

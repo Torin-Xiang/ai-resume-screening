@@ -8,19 +8,29 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...core.rubric import Rubric
 from ...core.rubric_gen import generate_rubric
+from ...core.rubric_patch import RubricPatchError
 from ...services import jobs as jobs_service
 from ...services import rescore as rescore_service
+from ...services import rubric_chat
+from ...store import repo
 from ...store.db import Database
 from ...store.entities import Job
 from ..deps import get_db, get_llm
 from ..schemas import (
+    ImpactOut,
     JobCreate,
     JobOut,
     JobUpdate,
+    PatchOut,
     RescoreStatsOut,
+    RubricApplyIn,
+    RubricApplyOut,
     RubricGenerateIn,
     RubricGenerateOut,
     RubricOut,
+    RubricProposeIn,
+    RubricProposeOut,
+    RubricRollbackIn,
     RubricSetIn,
 )
 
@@ -169,6 +179,114 @@ async def generate_rubric_draft(
     return RubricGenerateOut(
         rubric=info.payload, dropped=dropped, saved=True, rubric_id=info.rubric_id, version=info.version
     )
+
+
+# ————————————— 对话式改标准（技术方案 §7）—————————————
+
+
+@router.post("/{job_id}/rubric/propose", response_model=RubricProposeOut)
+async def propose_rubric_change(
+    job_id: str,
+    payload: RubricProposeIn,
+    db: Database = Depends(get_db),
+    llm=Depends(get_llm),
+) -> RubricProposeOut:
+    """用一句话改标准 → 变更清单 + 对现有排名的影响。**这一步不改变当前标准。**
+
+    三道闸的第一、二道（产品方案 §6.4）：先说清改了什么、会影响到谁，
+    再由 HR 决定要不要生效。
+    """
+    jobs_service.require_job(db, job_id)
+    try:
+        outcome = await rubric_chat.propose(
+            db=db, job_id=job_id, utterance=payload.utterance, llm=llm
+        )
+    except rubric_chat.UtteranceRejected as exc:
+        # 合规红线：给出"拒绝 + 理由"，不是系统故障，所以用 422 并原样带上说明
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RubricPatchError as exc:
+        raise HTTPException(status_code=422, detail=f"这次改动无法执行：{exc}") from exc
+
+    descriptions = outcome.descriptions
+    patches = [
+        PatchOut(
+            index=i,
+            op=p.op,
+            kind=p.kind,
+            target_id=p.target_id,
+            before=p.before,
+            after=p.after,
+            reason=p.reason,
+            description=descriptions[i] if i < len(descriptions) else "",
+        )
+        for i, p in enumerate(outcome.proposal.patches)
+    ]
+    return RubricProposeOut(
+        proposal_id=outcome.record.proposal_id,
+        utterance=outcome.record.utterance,
+        summary=outcome.proposal.summary,
+        refused=outcome.refused,
+        refused_reason=outcome.proposal.refused_reason,
+        patches=patches,
+        impact=ImpactOut(**outcome.impact.to_payload()),
+    )
+
+
+@router.post("/{job_id}/rubric/apply", response_model=RubricApplyOut)
+async def apply_rubric_change(
+    job_id: str,
+    payload: RubricApplyIn,
+    db: Database = Depends(get_db),
+    llm=Depends(get_llm),
+) -> RubricApplyOut:
+    """第三道闸：确认（或部分采纳）后写入新版本并重排。
+
+    重排只重跑评分层，不重新解析——所以"改完立刻看到新排名"不需要等。
+    """
+    try:
+        outcome = await rubric_chat.apply(
+            db=db,
+            job_id=job_id,
+            proposal_id=payload.proposal_id,
+            accepted=payload.accepted,
+            llm=llm,
+        )
+    except RubricPatchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return RubricApplyOut(
+        rubric_id=outcome.rubric_id,
+        version=outcome.version,
+        applied=outcome.applied,
+        rescored=outcome.rescored,
+        llm_calls=outcome.llm_calls,
+    )
+
+
+@router.post("/{job_id}/rubric/rollback", response_model=RubricOut)
+async def rollback_rubric(
+    job_id: str,
+    payload: RubricRollbackIn,
+    db: Database = Depends(get_db),
+    llm=Depends(get_llm),
+) -> RubricOut:
+    """回滚到历史版本（产品方案 §6.4：标准每次变更留版本，可回退）。
+
+    回滚**不删历史**：它是"把旧版本重新设为当前版本"，而不是把时间倒回去。
+    这样"改了又改回来"这件事本身也留在版本记录里，复盘时看得到。
+    """
+    jobs_service.require_job(db, job_id)
+    target = repo.get_rubric_by_id(db, payload.rubric_id)
+    if target is None or target.job_id != job_id:
+        raise HTTPException(status_code=404, detail="该版本不存在或不属于此岗位")
+
+    rubric = _parse_rubric(target.payload)
+    info = jobs_service.set_rubric(db, job_id, rubric, note=f"回滚到 {target.version}")
+    if payload.rescore:
+        await rescore_service.rescore_job(
+            db=db, job_id=job_id, rubric=rubric, rubric_id=info.rubric_id, llm=llm
+        )
+    return _to_rubric_out(info)
 
 
 @router.post("/{job_id}/ranking/rebuild", response_model=RescoreStatsOut)

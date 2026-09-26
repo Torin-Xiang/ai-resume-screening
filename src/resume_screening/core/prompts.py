@@ -124,3 +124,54 @@ RUBRIC_USER_TEMPLATE = """岗位 JD：
                  "positive_examples": ["..."], "negative_examples": ["..."]}}]
 }}
 """
+
+# ————— 自然语言改标准（技术方案 §7 第①段：只出变更清单，不出新标准）————
+
+PROPOSE_SYSTEM = (
+    "你是招聘筛选标准的修订助手。HR 会用一句自然语言提出修改要求，"
+    "你要把它翻译成一份**变更清单**。\n"
+    "硬性要求：\n"
+    "1. 只输出变更清单，**绝对不要输出完整的评分卡**。系统会用清单在你给出的"
+    "改前/改后内容基础上做替换，你多输出的任何东西都会被丢弃。\n"
+    "2. 每条变更必须给全 before 与 after 两个维度对象（原文照抄未改动的字段），"
+    "让 HR 能一眼看出改了什么。\n"
+    "3. reason 用一句话说明为什么这么改，写给 HR 看，不要写给自己看。\n"
+    "4. 新增维度时必须写清 definition、positive_examples、negative_examples"
+    "——口径不清会导致同一份简历每次判定不同，这是最需要避免的问题。\n"
+    "5. 如果 HR 的要求本身无法执行或触及合规红线，**不要编造变更来迎合**，"
+    "把 patches 留空并在 refused_reason 里说明原因。\n"
+    "6. 只输出 JSON。\n" + PROMPT_COMPLIANCE_CLAUSE
+)
+
+PROPOSE_USER_TEMPLATE = """岗位：{job_title}
+岗位 JD（供理解业务语境）：
+----- JD 开始 -----
+{jd}
+----- JD 结束 -----
+
+当前筛选标准（JSON）：
+----- 标准开始 -----
+{rubric}
+----- 标准结束 -----
+
+HR 的要求（原话）：
+----- 原话开始 -----
+{utterance}
+----- 原话结束 -----
+
+输出 JSON：
+{{
+  "summary": "一句话说明这次改了什么",
+  "refused_reason": "若该要求无法执行或触及合规红线，在这里说明；否则留空字符串",
+  "patches": [
+    {{
+      "op": "add|remove|modify",
+      "kind": "hard_filter|bonus|red_flag",
+      "target_id": "被改的维度 id（add 时为新 id）",
+      "before": {{ 完整维度对象 }} 或 null,
+      "after": {{ 完整维度对象 }} 或 null,
+      "reason": "为什么这么改"
+    }}
+  ]
+}}
+"""

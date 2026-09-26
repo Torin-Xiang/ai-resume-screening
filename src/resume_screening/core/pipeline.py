@@ -15,6 +15,7 @@ from .ids import new_run_id
 from .llm import LLMClient, MeteredLLM
 from .models import CandidateResult, ParseResult, ResumeDocument, RunRecord
 from .ports import ResultExporter, ResumeParser
+from .quality import assess_text_quality
 from .rubric import Rubric
 from .scoring import evaluate_candidate, _sort_key
 
@@ -126,6 +127,59 @@ def process_one(
         cache = ResumeCache()
     doc = extract_resume(parsed, llm, cache=cache, use_cache=use_cache)
     doc.source_path = str(file_path)  # 路径可能变（换机器/换目录），内容未变
+
+    if not doc.parse_quality.usable:
+        return doc, None
+
+    stage(STAGE_SCORING)
+    result = evaluate_candidate(doc, rubric, llm)
+    return doc, result
+
+
+def process_text(
+    *,
+    text: str,
+    resume_id: str,
+    file_name: str,
+    rubric: Rubric,
+    llm: LLMClient,
+    cache: ResumeCache | None = None,
+    use_cache: bool = True,
+    source_path: str = "",
+    on_stage: Callable[[str], None] | None = None,
+) -> tuple[ResumeDocument, CandidateResult | None]:
+    """处理**HR 手工粘贴**的简历文本（产品方案 §6.1 的兜底路径）。
+
+    扫描件不做 OCR 是刻意选择（成本高、中文版式准确率不稳），改用手工粘贴：
+    粘一次即可，而且粘进来的是 HR 亲自确认过的内容——不存在"OCR 认错了还查不出来"。
+
+    与 `process_one` 的区别只在第一步：没有解析环节（文本已经是文本），
+    因此阶段上报从 `extracting` 开始。质量自检仍然走**同一份**阈值
+    （`core/quality`），避免同一段内容在两条路径上得到不同结论。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        raise ValueError("粘贴的简历内容为空")
+
+    def stage(name: str) -> None:
+        if on_stage is not None:
+            on_stage(name)
+
+    parsed = ParseResult(
+        resume_id=resume_id,
+        source_path=source_path,
+        file_name=file_name,
+        raw_text=stripped,
+        quality=assess_text_quality(stripped),
+        pages=1,
+        blocks=[],
+    )
+
+    stage(STAGE_EXTRACTING)
+    if cache is None:
+        cache = ResumeCache()
+    doc = extract_resume(parsed, llm, cache=cache, use_cache=use_cache)
+    doc.source_path = source_path
 
     if not doc.parse_quality.usable:
         return doc, None

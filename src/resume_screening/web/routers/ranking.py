@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 
 from ...core.models import CandidateResult
+from ...services import export as export_service
 from ...services import jobs as jobs_service
 from ...services.ranking import build_ranking
 from ...store import repo
@@ -96,3 +98,23 @@ def review(job_id: str, payload: ReviewIn, db: Database = Depends(get_db)) -> Re
             status_code=status.HTTP_404_NOT_FOUND, detail="该简历在当前标准下没有结论"
         )
     return ReviewOut(resume_id=payload.resume_id, hr_decision=decision)
+
+
+@router.get("/{job_id}/export")
+def export_ranking(job_id: str, db: Database = Depends(get_db)) -> FileResponse:
+    """导出 Excel（产品方案 §5.2：降级为导出功能，不再是主界面）。
+
+    顺序与屏幕一致，并带上 HR 已做的复核判定——导出的表拿来就能发给业务方，
+    不需要再人工对一遍。
+    """
+    jobs_service.require_job(db, job_id)
+    try:
+        result = export_service.export_job(db, job_id)
+    except jobs_service.RubricNotSet as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return FileResponse(
+        path=result.path,
+        filename=result.file_name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

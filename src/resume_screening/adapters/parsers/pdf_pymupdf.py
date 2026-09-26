@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,23 +18,20 @@ except ImportError:  # pragma: no cover
     import fitz  # type: ignore[no-redef]
 
 from resume_screening.core.ids import resume_id_of
-from resume_screening.core.models import ParseQuality, ParseResult, ParseStatus
+from resume_screening.core.models import ParseResult
+from resume_screening.core.quality import assess_text_quality
 
-
-class UnsupportedFileError(ValueError):
-    """文件类型不是该解析器支持的格式（应由上层换解析器，而不是硬解）。"""
-
-# —— 质量自检阈值（集中放置，便于根据真实样本调整）——
-MIN_CHARS_OK = 200          # 少于该字符数 → suspect（中文简历通常远大于此）
-MIN_CHARS_SCANNED = 50      # 少于该字符数且有图片 → 判定为扫描件
-MIN_CJK_RATIO = 0.03        # 中文占比过低 → suspect（乱码/英文简历，需人工留意）
+# —— 版式重排参数 ——
+# 质量阈值（字符数 / 中文占比）见 core/quality.py：与"粘贴文本"兜底共用一份，
+# 避免同一份内容在 PDF 路径与粘贴路径下得到不同结论。
 LINE_TOLERANCE_FACTOR = 0.6  # 行聚类容差 = 该系数 × 行高中位数
 FULL_WIDTH_RATIO = 0.6      # 块宽超过页宽该比例 → 视为通栏块（标题/分隔）
 GAP_BIN = 5.0               # 列投影桶宽（pt）
 GAP_MIN_BINS = 3            # 连续空白桶数达到该值才算"列间距"
 
-_CJK = re.compile(r"[\u4e00-\u9fff]")
-_ALNUM = re.compile(r"[0-9A-Za-z]")
+
+class UnsupportedFileError(ValueError):
+    """文件类型不是该解析器支持的格式（应由上层换解析器，而不是硬解）。"""
 
 
 @dataclass
@@ -86,7 +82,7 @@ class PdfPymupdfParser:
 
         ordered = self._reorder(blocks)
         raw_text = "\n".join(b.text for b in ordered)
-        quality = self._quality_check(raw_text, pages=pages, has_images=has_images)
+        quality = assess_text_quality(raw_text, pages=pages, has_images=has_images)
 
         return ParseResult(
             resume_id=resume_id_of(p),
@@ -196,50 +192,8 @@ class PdfPymupdfParser:
         return sorted(blocks, key=lambda b: (b.page, round(b.y0 / tol), b.x0))
 
     # ---------------- 质量自检 ----------------
-    def _quality_check(
-        self, text: str, *, pages: int, has_images: bool
-    ) -> ParseQuality:
-        stripped = text.strip()
-        char_count = len(stripped)
-        cjk = len(_CJK.findall(stripped))
-        alnum = len(_ALNUM.findall(stripped))
-        denom = cjk + alnum
-        cjk_ratio = (cjk / denom) if denom else 0.0
-
-        reasons: list[str] = []
-        status = ParseStatus.OK
-        is_scanned = False
-
-        if char_count == 0:
-            status = ParseStatus.NEEDS_MANUAL
-            is_scanned = has_images or pages > 0
-            reasons.append("未提取到任何文本：疑似扫描件或图片型 PDF，需人工处理")
-        elif char_count < MIN_CHARS_SCANNED and has_images:
-            status = ParseStatus.NEEDS_MANUAL
-            is_scanned = True
-            reasons.append(
-                f"文本仅 {char_count} 字且含图片：疑似扫描件，需人工处理（不送入模型）"
-            )
-        elif char_count < MIN_CHARS_OK:
-            status = ParseStatus.SUSPECT
-            reasons.append(f"文本仅 {char_count} 字，少于阈值 {MIN_CHARS_OK}：可能解析不全，请人工留意")
-
-        if char_count > 0 and cjk_ratio < MIN_CJK_RATIO:
-            if status is ParseStatus.OK:
-                status = ParseStatus.SUSPECT
-            reasons.append(
-                f"中文字符占比 {cjk_ratio:.1%}，低于 {MIN_CJK_RATIO:.0%}："
-                "可能为乱码、编码异常或纯外文简历，请人工留意"
-            )
-
-        return ParseQuality(
-            status=status,
-            page_count=pages,
-            char_count=char_count,
-            cjk_ratio=round(cjk_ratio, 4),
-            reasons=reasons,
-            is_scanned=is_scanned,
-        )
+    # 实现已移到 core/quality.py：粘贴文本兜底要复用同一套阈值，
+    # 放在 core 才能既被适配器用、又不让适配器之间互相依赖。
 
 
 def parse_pdf(path: str | Path) -> ParseResult:

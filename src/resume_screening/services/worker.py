@@ -15,16 +15,24 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from ..core.llm import LLMClient
-from ..core.pipeline import STAGE_EXTRACTING, STAGE_PARSING, STAGE_SCORING, process_one
+from ..core.pipeline import (
+    STAGE_EXTRACTING,
+    STAGE_PARSING,
+    STAGE_SCORING,
+    process_one,
+    process_text,
+)
 from ..core.ports import ResumeParser
 from ..store import repo
 from ..store.db import Database
 from ..store.entities import ResumeStatus
 from . import jobs as jobs_service
 from .events import EventBus
+from .ingest import ORIGIN_PASTE
 from .ranking import one_line_reason
 
 STAGE_TO_STATUS: dict[str, ResumeStatus] = {
@@ -160,13 +168,10 @@ class ScreeningWorker:
         emit = self._stage_emitter(job_id, resume_id)
         try:
             doc, result = await asyncio.to_thread(
-                process_one,
-                file_path=record.stored_path,
+                self._run_one,
+                record=record,
                 rubric=rubric,
-                parser=self._parser,
-                llm=self._llm,
-                cache=self._cache,
-                on_stage=emit,
+                emit=emit,
             )
         except Exception as exc:  # noqa: BLE001
             self._fail(job_id, resume_id, self._describe(exc))
@@ -195,6 +200,34 @@ class ScreeningWorker:
         repo.set_resume_status(self._db, job_id, resume_id, ResumeStatus.DONE)
         self._publish_status(job_id, resume_id, ResumeStatus.DONE)
         self._schedule_ranking(job_id)
+
+    def _run_one(self, *, record, rubric, emit: Callable[[str], None]):
+        """按来源分派到对应的处理链路。
+
+        「上传」读文件走解析器；「粘贴」直接拿文本（产品方案 §6.1 的兜底）。
+        分派只在这一处，两条链路的下游（提取、评分、缓存、结论）完全相同——
+        兜底路径不应该是一条"简化版"链路，否则兜底出来的结论就和正常结论不可比。
+        """
+        if record.origin == ORIGIN_PASTE:
+            text = Path(record.stored_path).read_text(encoding="utf-8")
+            return process_text(
+                text=text,
+                resume_id=record.resume_id,
+                file_name=record.file_name,
+                rubric=rubric,
+                llm=self._llm,
+                cache=self._cache,
+                source_path=record.stored_path,
+                on_stage=emit,
+            )
+        return process_one(
+            file_path=record.stored_path,
+            rubric=rubric,
+            parser=self._parser,
+            llm=self._llm,
+            cache=self._cache,
+            on_stage=emit,
+        )
 
     # —————————————————— 事件 ——————————————————
 

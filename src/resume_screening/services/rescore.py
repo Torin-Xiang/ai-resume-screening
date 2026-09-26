@@ -79,6 +79,9 @@ async def rescore_job(
                     stats.failed += 1
                 return
 
+        # 与 worker 一致：结论里保留 HR 上传时的原始文件名，而不是存储用的 hash 名
+        result.file_name = record.file_name
+
         repo.put_result(
             db,
             job_id=job_id,

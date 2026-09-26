@@ -424,6 +424,8 @@ def test_upload_ranks_end_to_end(tmp_path: Path) -> None:
         assert ranking["counts"][GROUP_RECOMMEND] == 1
         item = ranking["groups"][0]["items"][0]
         assert item["candidate_name"] == "李示例"
+        # 给 HR 看的必须是上传时的原名，而不是存储用的内容 hash 名
+        assert item["file_name"] == "a.pdf"
         assert item["reason"]
         # 展开可见原文证据（每条结论都能被核对）
         assert any(d["evidence"] for d in item["dimensions"])
@@ -607,6 +609,30 @@ def test_health_endpoint(tmp_path: Path) -> None:
         body = client.get("/api/health").json()
         assert body["status"] == "ok"
         assert body["provider"] == "scripted"
+
+
+def test_js_mime_type_is_javascript() -> None:
+    """Windows 注册表会把 .js 映射成 text/plain，浏览器据此拒绝执行模块脚本，
+    页面表现为一片空白。应用必须显式注册 MIME，不能依赖机器环境。"""
+    import mimetypes
+
+    import resume_screening.web.app  # noqa: F401  导入即完成注册
+
+    assert mimetypes.guess_type("index.js")[0] == "application/javascript"
+    assert mimetypes.guess_type("index.css")[0] == "text/css"
+
+
+def test_served_frontend_asset_has_correct_mime(tmp_path: Path) -> None:
+    """前端构建产物由后端托管时，Content-Type 必须正确——否则浏览器白屏。"""
+    assets = Path(__file__).resolve().parents[1] / "web" / "dist" / "assets"
+    scripts = sorted(assets.glob("*.js")) if assets.is_dir() else []
+    if not scripts:
+        pytest.skip("前端尚未构建（web/dist/assets 为空），跳过静态托管检查")
+
+    with make_client(tmp_path) as (client, _):
+        resp = client.get(f"/assets/{scripts[0].name}")
+        assert resp.status_code == 200
+        assert "javascript" in resp.headers["content-type"]
 
 
 # ——————————————————— 事件总线 ———————————————————

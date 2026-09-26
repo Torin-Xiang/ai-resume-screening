@@ -181,6 +181,10 @@ class ScreeningWorker:
             self._schedule_ranking(job_id)
             return
 
+        # 存储时文件按内容 hash 命名（天然去重），但给 HR 看的必须是上传时的原名。
+        # 解析器只能看到存储路径，所以在这里换回原名——这是服务层才知道的信息。
+        result.file_name = record.file_name
+
         repo.put_result(
             self._db,
             job_id=job_id,

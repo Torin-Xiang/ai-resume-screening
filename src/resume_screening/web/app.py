@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,22 @@ from .routers import events as events_routes
 from .routers import jobs as jobs_routes
 from .routers import ranking as ranking_routes
 from .routers import resumes as resumes_routes
+
+# 必须在挂载静态资源**之前**执行。
+# Windows 注册表里 .js 的 Content-Type 可能是 text/plain，而 Python 的 mimetypes
+# 会读注册表，于是前端脚本以 text/plain 下发，浏览器直接拒绝执行模块脚本
+# （报 "Expected a JavaScript module script but the server responded with a MIME
+# type of text/plain"），页面表现为一片空白。显式注册，避免依赖机器环境。
+for _suffix, _mime in (
+    (".js", "application/javascript"),
+    (".mjs", "application/javascript"),
+    (".css", "text/css"),
+    (".json", "application/json"),
+    (".svg", "image/svg+xml"),
+    (".woff2", "font/woff2"),
+    (".woff", "font/woff"),
+):
+    mimetypes.add_type(_mime, _suffix)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000

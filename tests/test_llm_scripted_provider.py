@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import glob
+import json
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ from resume_screening.adapters.llm.scripted import (
     build_rubric_from_jd,
     extract_fields_from_text,
     judge_dimensions,
+    propose_patches_from_utterance,
 )
 from resume_screening.core.cache import ResumeCache
 from resume_screening.core.extractor import extract_resume
@@ -445,3 +447,103 @@ def test_scripted_run_is_deterministic() -> None:
     b = extract_fields_from_text(RESUME)
 
     assert a == b
+
+
+# ——————————————————— ④ 一句话改标准 ———————————————————
+
+_EXAMPLE_RUBRIC = json.loads(
+    (Path(__file__).resolve().parent.parent / "rubrics" / "example.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def _propose(utterance: str, rubric: dict | None = None) -> dict:
+    return propose_patches_from_utterance(utterance, rubric or _EXAMPLE_RUBRIC)
+
+
+def test_bonus_utterance_adds_a_bonus_dimension() -> None:
+    """「有 XX 的经历为优先」→ 新增加分项，条件本体不带句式词。"""
+    out = _propose("有AI产品经理实习的经历为优先")
+
+    assert out["refused_reason"] == ""
+    assert len(out["patches"]) == 1
+    p = out["patches"][0]
+    assert p["op"] == "add"
+    assert p["kind"] == "bonus"
+    after = p["after"]
+    assert after["name"] == "AI产品经理实习的经历"
+    # definition 存的是清洗后的条件本体（"有"是句式词，不是条件）
+    assert after["definition"].startswith("AI产品经理实习的经历")
+    assert after["rule"] is None
+    assert 1 <= after["weight"] <= 10
+
+
+def test_hard_utterance_adds_a_hard_filter() -> None:
+    """「需要有智能制造经验」→ 新增必须项。"""
+    out = _propose("需要有智能制造经验")
+
+    p = out["patches"][0]
+    assert p["op"] == "add" and p["kind"] == "hard_filter"
+    assert p["after"]["name"] == "智能制造经验"
+
+
+def test_new_id_continues_the_existing_prefix() -> None:
+    """example.json 的 bonus 是 bigtech/edu211（字母前缀）——续号要避开现有 id。
+
+    现有 id 不带序号，所以回退到默认前缀 b1；关键是**不能撞车**：
+    add 的 target_id 与现有 id 相同会替换掉别人的维度，那是数据破坏。
+    """
+    out = _propose("有AI产品经理实习的经历为优先")
+
+    new_id = out["patches"][0]["target_id"]
+    existing_ids = {d["id"] for d in _EXAMPLE_RUBRIC["bonus"]}
+    assert new_id not in existing_ids
+
+
+def test_remove_takes_priority_over_bonus_wording() -> None:
+    """「去掉 XX 优先」是删除，不是新增——"优先"两个字不能被加分句式抢走。"""
+    out = _propose("去掉大厂经历优先")
+
+    p = out["patches"][0]
+    assert p["op"] == "remove"
+    assert p["before"] is not None
+
+
+def test_unknown_utterance_refuses_instead_of_guessing() -> None:
+    """句式之外的自由表达不猜——编一条 HR 没提的变更比"没听懂"严重得多。"""
+    out = _propose("把整体门槛再收紧一点，感觉现在太松了")
+
+    assert out["patches"] == []
+    assert "句式" in out["refused_reason"]
+    assert "真实模型" in out["refused_reason"]
+
+
+def test_proposal_from_client_passes_validation_and_dry_run() -> None:
+    """端到端：走完整 PROPOSE prompt → parse_proposal → apply_patches 干跑。
+
+    这条链就是界面"改标准"按钮背后的路径；任何一环格式不合法都会
+    在真实使用时变成 422，所以必须在测试里走一遍，而不是只测函数。
+    """
+    from resume_screening.core.prompts import PROPOSE_SYSTEM, PROPOSE_USER_TEMPLATE
+    from resume_screening.core.rubric import Rubric
+    from resume_screening.core.rubric_patch import apply_patches, parse_proposal
+
+    client = ScriptedLLMClient()
+    resp = client.complete_json(
+        system=PROPOSE_SYSTEM,
+        user=PROPOSE_USER_TEMPLATE.format(
+            job_title="AI产品经理",
+            jd="（JD 略）",
+            rubric=json.dumps(_EXAMPLE_RUBRIC, ensure_ascii=False),
+            utterance="有AI产品经理实习的经历为优先",
+        ),
+    )
+
+    proposal = parse_proposal(resp.payload)
+    assert len(proposal.patches) == 1
+    assert client.propose_calls == 1
+
+    base = Rubric.model_validate(_EXAMPLE_RUBRIC)
+    patched = apply_patches(base, proposal)  # 干跑：不合法清单在这里被拦下
+    assert any(d.id == proposal.patches[0].target_id for d in patched.bonus)

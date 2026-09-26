@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -182,13 +183,15 @@ def _short_label(body: str, limit: int = _LABEL_LIMIT) -> str:
     return cut.rstrip(_LABEL_TAIL) + "…"
 
 
-def _dim(body: str, *, dim_id: str, kind: str) -> dict[str, Any]:
+def _dim(
+    body: str, *, dim_id: str, kind: str, source: str = "JD 原文"
+) -> dict[str, Any]:
     label = _short_label(body)
     hint = _short_label(body, limit=14)
     return {
         "id": dim_id,
         "name": label,
-        "definition": f"{body}（判据照抄 JD 原文，未做任何扩写）",
+        "definition": f"{body}（判据照抄{source}，未做任何扩写）",
         "positive_examples": [f"简历中出现与「{hint}」直接相关的经历描述"],
         "negative_examples": [f"简历中完全没有与「{hint}」相关的内容"],
         "kind": kind,
@@ -454,6 +457,156 @@ def judge_dimensions(dimensions: list[dict[str, Any]], text: str) -> dict[str, A
     return {"results": results}
 
 
+# ————————————————————— ④ 一句话改标准 —————————————————————
+
+#: 改标准只认这几类句式。真实模型读语义，这里读模式——只覆盖 HR 最常用的
+#: 表达；句式之外的自由表达一律不猜，宁可让界面说"没识别出改动"，
+#: 也不能编一条 HR 没有要求的变更出来（与本适配器"不扩写"的红线一致）。
+_BONUS_RE = (re.compile(r"(.+?)为优先"), re.compile(r"(.+?)优先"), re.compile(r"(.+?)加分"))
+_HARD_RE = (re.compile(r"需要(.+)"), re.compile(r"必须(.+)"))
+_RED_RE = (re.compile(r"(.+?)减分"),)
+_REMOVE_RE = (re.compile(r"去掉(.+)"), re.compile(r"删除(.+)"), re.compile(r"移除(.+)"))
+
+_UTTERANCE_RE = re.compile(r"----- 原话开始 -----\n(.*?)\n----- 原话结束 -----", re.S)
+_RUBRIC_JSON_RE = re.compile(r"----- 标准开始 -----\n(.*?)\n----- 标准结束 -----", re.S)
+
+_KIND_FIELD = {"hard_filter": "hard_filters", "bonus": "bonus", "red_flag": "red_flags"}
+_KIND_PREFIX = {"hard_filter": "h", "bonus": "b", "red_flag": "r"}
+_KIND_LABEL = {"hard_filter": "必须项", "bonus": "加分项", "red_flag": "减分项"}
+
+
+def _first_match(patterns: tuple[re.Pattern[str], ...], text: str) -> str | None:
+    for p in patterns:
+        m = p.search(text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _clean_condition(raw: str) -> str:
+    """从原话里抠出条件本体：去句式词（前导「具备/需要/必须/有」、尾部「优先/加分/减分」）。
+
+    「有AI产品经理实习的经历为优先」应得到「AI产品经理实习的经历」——
+    前导的"有"、尾部的"为优先"都是句式的一部分，不是条件；
+    留在维度名里会读起来像病句，拿去匹配现有维度名也永远匹配不上。
+    """
+    s = raw.strip().strip("，。、,.！!？? ")
+    for head in ("具备", "需要", "必须", "有"):
+        if s.startswith(head) and len(s) > len(head) + 1:
+            s = s[len(head) :]
+            break
+    for tail in ("为优先", "优先", "加分", "减分"):
+        if s.endswith(tail) and len(s) > len(tail) + 1:
+            s = s[: -len(tail)]
+            break
+    return s.strip("，。、,. ")
+
+
+def _next_dim_id(rubric: dict[str, Any], kind: str) -> str:
+    """给新增维度取 id：沿用现有前缀续号，且**只看同前缀**的序号。
+
+    序号必须按前缀分组取：把「edu211」的 211 当成别人的序号，
+    会生成「bigtech212」这种拼出来的怪 id。
+    """
+    ids = [str(d.get("id") or "") for d in rubric.get(_KIND_FIELD[kind], [])]
+    prefix = _KIND_PREFIX[kind]
+    if ids:
+        alpha = "".join(ch for ch in ids[0] if ch.isalpha())
+        if alpha:
+            prefix = alpha
+    numbers: list[int] = []
+    for i in ids:
+        if "".join(ch for ch in i if ch.isalpha()) != prefix:
+            continue
+        digits = re.sub(r"\D", "", i)
+        numbers.append(int(digits) if digits else 0)
+    return f"{prefix}{max(numbers, default=0) + 1}"
+
+
+def propose_patches_from_utterance(utterance: str, rubric: dict[str, Any]) -> dict[str, Any]:
+    """把一句 HR 的修改要求解析成变更清单（规则版，PROPOSE prompt 的离线实现）。
+
+    一次只处理一条要求：真实场景里 HR 的修改本来就该一条一条来，
+    一次一句话里塞多个要求时，哪个都说不清楚（产品方案 §6.4 的确认成本）。
+    """
+    text = (utterance or "").strip()
+    patches: list[dict[str, Any]] = []
+    summary = ""
+
+    # 移除类先行：否则「去掉 XX 优先」会被加分句式抢先匹配出"优先"。
+    removed = _first_match(_REMOVE_RE, text)
+    if removed:
+        needle = _clean_condition(removed)
+        existing = [d for f in _KIND_FIELD.values() for d in rubric.get(f, [])]
+        hit = next(
+            (d for d in existing if needle and needle in str(d.get("name") or "")), None
+        )
+        if hit is None:
+            # 句式是"删除"却找不到目标——绝不能落进新增分支，那会把
+            # "去掉大厂经历"整句变成一个新维度，方向完全相反。
+            return {
+                "summary": "",
+                "refused_reason": (
+                    f"想移除，但当前标准里没有名字包含「{needle}」的维度。"
+                    "可以在「查看 / 调整标准」里确认维度名称后再试。"
+                ),
+                "patches": [],
+            }
+        patches.append(
+            {
+                "op": "remove",
+                "kind": hit["kind"],
+                "target_id": hit["id"],
+                "before": hit,
+                "after": None,
+                "reason": f"按你的原话移除维度「{hit['name']}」",
+            }
+        )
+        summary = f"移除维度「{hit['name']}」"
+
+    if not patches:
+        cond = _first_match(_HARD_RE, text)
+        kind = "hard_filter" if cond else None
+        if cond is None:
+            cond = _first_match(_BONUS_RE, text)
+            kind = "bonus" if cond else None
+        if cond is None:
+            cond = _first_match(_RED_RE, text)
+            kind = "red_flag" if cond else None
+
+        if cond is not None:
+            condition = _clean_condition(cond)
+            dim_id = _next_dim_id(rubric, kind)
+            after = _dim(condition, dim_id=dim_id, kind=kind, source="HR 原话")
+            if kind == "bonus":
+                # 权重沿现有加分项顺延（新加的条件排在后面，权重略低是合理默认）
+                after["weight"] = max(1, 10 - len(rubric.get("bonus", [])))
+            patches.append(
+                {
+                    "op": "add",
+                    "kind": kind,
+                    "target_id": dim_id,
+                    "before": None,
+                    "after": after,
+                    "reason": f"按你的原话新增{_KIND_LABEL[kind]}，口径照抄原话未扩写",
+                }
+            )
+            summary = f"新增{_KIND_LABEL[kind]}「{after['name']}」"
+
+    if not patches:
+        return {
+            "summary": "",
+            "refused_reason": (
+                "离线规则通道没能从这句话里认出可执行的句式。它只支持有限的表达："
+                "「有 XX 优先 / XX 加分」加一项加分、「需要 XX」加一项必须、"
+                "「XX 减分」加一项减分、「去掉 XX」移除维度。换成这类说法即可；"
+                "自由表达的语义理解需要接入真实模型。"
+            ),
+            "patches": [],
+        }
+    return {"summary": summary, "refused_reason": "", "patches": patches}
+
+
 # ————————————————————— 适配器 —————————————————————
 
 
@@ -467,6 +620,7 @@ class ScriptedLLMClient:
         self.extract_calls = 0
         self.score_calls = 0
         self.rubric_calls = 0
+        self.propose_calls = 0
 
     def complete_json(
         self,
@@ -479,7 +633,7 @@ class ScriptedLLMClient:
         from resume_screening.core.prompts import RUBRIC_SYSTEM, SCORE_SYSTEM
 
         # 延迟导入：避免模块级循环依赖（prompts 会 import compliance）
-        from resume_screening.core.prompts import EXTRACT_SYSTEM
+        from resume_screening.core.prompts import EXTRACT_SYSTEM, PROPOSE_SYSTEM
 
         usage = Usage(model=self.model)  # 离线：确实不消耗 token，如实上报 0
 
@@ -506,5 +660,19 @@ class ScriptedLLMClient:
             # 维度清单从 prompt 里解析，保证理由里的名字与评分卡一致
             dims = [{"id": i, "name": n} for i, n in _DIM_LINE.findall(user)]
             return LLMResponse(payload=judge_dimensions(dims, text), usage=usage, raw="scripted")
+
+        if system == PROPOSE_SYSTEM:
+            self.propose_calls += 1
+            mu = _UTTERANCE_RE.search(user)
+            utterance = mu.group(1) if mu else ""
+            rubric: dict[str, Any] = {}
+            mr = _RUBRIC_JSON_RE.search(user)
+            if mr:
+                try:
+                    rubric = json.loads(mr.group(1))
+                except ValueError:
+                    rubric = {}  # 标准解析不了 → 当作空标准，句式仍能识别，id 从头编号
+            payload = propose_patches_from_utterance(utterance, rubric)
+            return LLMResponse(payload=payload, usage=usage, raw="scripted")
 
         return LLMResponse(payload={}, usage=usage, raw="scripted")

@@ -474,6 +474,43 @@ def test_scanned_pdf_marked_needs_manual(tmp_path: Path) -> None:
         assert resumes[0]["status"] == ResumeStatus.NEEDS_MANUAL.value
         assert resumes[0]["error"], "必须说明为什么需要人工处理"
 
+
+def test_watermarked_image_pdf_is_held_back_and_reason_is_actionable(
+    tmp_path: Path,
+) -> None:
+    """图片型 PDF（只有水印文本层）→ 不送模型，且理由必须说清是"图片/水印"导致。
+
+    这条锁的是**整条链路**：解析器判定 → worker 取 `parse_quality.reasons` → 入库 →
+    接口下发 → 界面渲染。真实样本上出过的问题就在链路最前端：
+    水印把字符数抬过阈值，判定退化成 suspect，于是这份简历**被送进了模型**，
+    模型只能对着水印编字段——看起来"处理成功"，实则全是编造，比报错更危险。
+
+    断言理由里必须出现"图片"或"水印"，而不只是"非空"：
+    只判非空的话，退化成笼统的"解析质量存疑"也能过，HR 仍然不知道该做什么。
+    """
+    from tests.conftest import write_watermarked_image_pdf
+
+    with make_client(tmp_path) as (client, llm):
+        job_id = create_job(client, rubric=make_rubric_dict("v1"))
+        sample = write_watermarked_image_pdf(tmp_path / "wm_image.pdf")
+
+        upload(client, job_id, [sample])
+        wait_settled(client, job_id)
+
+        item = client.get(f"/api/jobs/{job_id}/resumes").json()["items"][0]
+        assert item["status"] == ResumeStatus.NEEDS_MANUAL.value
+        assert item["error"], "必须说明为什么需要人工处理"
+        assert ("图片" in item["error"]) or ("水印" in item["error"]), (
+            f"理由必须指向真正的成因（图片/水印），实际：{item['error']}"
+        )
+        # 绝不能出现在排名里——那意味着它被当成"看过并放过"
+        ranking = client.get(f"/api/jobs/{job_id}/ranking").json()
+        assert all(
+            r["resume_id"] != item["resume_id"]
+            for g in ranking["groups"]
+            for r in g["items"]
+        ), "需人工处理的简历不得进入排名"
+
         ranking = client.get(f"/api/jobs/{job_id}/ranking").json()
         assert ranking["total"] == 0  # 未评估，不出现在排名里
         assert llm.score_calls == 0  # 解析不达标 → 不调评分

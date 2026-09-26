@@ -47,8 +47,19 @@ const APPLY = process.env.APPLY === '1'
 const EXPECT_CHAT = process.env.EXPECT_CHAT === '1'
 const EXPECT_REFUSED = process.env.EXPECT_REFUSED === '1'
 const EXPORT = process.env.EXPORT === '1'
+// 期望"需要你处理"面板里有几份（needs_manual / failed）。
+// 用来验产品方案的硬约束"绝不静默跳过"——光看排名区看不出来，
+// 因为被跳过的简历**本来就不在排名里**。
+const EXPECT_ATTENTION = process.env.EXPECT_ATTENTION
+  ? Number(process.env.EXPECT_ATTENTION)
+  : null
+// 期望面板里出现的关键词（用 | 分隔），用来验"理由真的说给 HR 看了"
+const EXPECT_ATTENTION_TEXT = process.env.EXPECT_ATTENTION_TEXT || ''
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** 断言失败时打印的页面文字可能很长，截断以免淹掉日志。 */
+const brief = (s, max = 180) => (s.length > max ? `${s.slice(0, max)}…` : s)
 
 const CHROME_CANDIDATES = [
   process.env.CHROME,
@@ -139,6 +150,11 @@ const PROBE =
   'impact: !!document.querySelector(".impact"),' +
   'notice: !!document.querySelector(".chat-notice"),' +
   'emptyRanking: !!document.querySelector(".empty-title"),' +
+  // "需要你处理"面板：被跳过的简历不在这张榜上，只看 .row 会漏掉它们
+  'attention: document.querySelectorAll(".status-block-attention .status-row").length,' +
+  'pending: document.querySelectorAll(".status-row").length' +
+  ' - document.querySelectorAll(".status-block-attention .status-row").length,' +
+  'attentionText: ((document.querySelector(".status-block-attention") || {}).textContent || "").replace(/\\s+/g, " ").trim(),' +
   'err: (document.querySelector(".banner-error") || {}).textContent || ""' +
   '})'
 
@@ -341,6 +357,25 @@ async function main() {
     if (EXPECT_CHAT && !finalState.notice && !finalState.refused) {
       console.error('期望走完改标准流程（出现生效提示），但没有')
       failed = true
+    }
+    if (EXPECT_ATTENTION !== null && finalState.attention !== EXPECT_ATTENTION) {
+      console.error(
+        `"需要你处理"份数不符：期望 ${EXPECT_ATTENTION}，实际 ${finalState.attention}` +
+          `（面板文字：${brief(finalState.attentionText) || '空'}）`,
+      )
+      failed = true
+    }
+    if (EXPECT_ATTENTION_TEXT) {
+      const missing = EXPECT_ATTENTION_TEXT.split('|').filter(
+        (kw) => !finalState.attentionText.includes(kw),
+      )
+      if (missing.length) {
+        console.error(
+          `"需要你处理"面板缺少关键词：${missing.join('、')}\n` +
+            `  实际面板文字：${brief(finalState.attentionText) || '空'}`,
+        )
+        failed = true
+      }
     }
   } finally {
     proc.kill()

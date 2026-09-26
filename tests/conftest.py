@@ -83,6 +83,57 @@ def write_empty_pdf(path: str | Path) -> Path:
     return p
 
 
+# 招聘平台导出的 PDF 会铺一层水印（同一串字符重复十几次）。
+# 用真实样本里那串的形状与长度（无空格、含 - 与 _），不复用具体值。
+WATERMARK = "3ad432598e54e3b11Hx92dS6FFVYw4W-UvycWOChl_bTMRFi"
+
+
+def write_watermarked_image_pdf(
+    path: str | Path, *, repeats: int = 12, pages: int = 1
+) -> Path:
+    """图片型 PDF + 水印文本层（真实样本的形态，见 fixtures/ 本地样本）。
+
+    真实场景：每页 1 张整页图，文本层只有同一串水印重复 16 次左右，
+    总字符数 746 > MIN_CHARS_OK=200，于是"字符数太少"的扫描件判据**整体失效**，
+    自检只给了 suspect —— 而 suspect 仍会送入模型，模型对着水印只能编造字段。
+    这个夹具就是为了让那条判据不再退化。
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    for _ in range(pages):
+        page = doc.new_page(width=595, height=842)
+        page.insert_image(page.rect, stream=_white_png())
+        for i in range(repeats):
+            # 用 Helvetica 而非中文字体：真实样本的文本层也是单字节西文字体
+            page.insert_text((40, 60 + i * 20), WATERMARK, fontname="helv", fontsize=8)
+    doc.save(str(p))
+    doc.close()
+    return p
+
+
+def write_pdf_with_avatar(
+    path: str | Path, items: list[tuple[float, float, str]] | None = None
+) -> Path:
+    """正常文本简历 + 一张小头像照片。
+
+    反向证明用：**头像也是图片**。如果判据写成"有没有图片"，这份正常简历
+    会被误判成扫描件；必须用"图片覆盖率"才能把整页是图与角落有张头像分开
+    （真实样本实测：整页图片型 1.00，含头像的正常简历 0.00–0.04）。
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    for x, y, text in items if items is not None else SINGLE_COLUMN_ITEMS:
+        page.insert_text((x, y), text, fontname=FONT, fontsize=FONT_SIZE)
+    avatar = fitz.Rect(480, 40, 550, 130)  # 约占版面 1.6%
+    page.insert_image(avatar, stream=_white_png(80, 100))
+    doc.save(str(p))
+    doc.close()
+    return p
+
+
 # —— 合成简历内容（虚构人物，仅用于测试版式处理）——
 # 注意：文本长度受页宽约束（A4 595pt），左右栏文本都不得越过中缝，否则合成出的
 # "分栏"在坐标投影上会重叠，无法用于验证分栏检测。
@@ -143,3 +194,15 @@ def scanned_pdf(tmp_path) -> Path:
 @pytest.fixture
 def empty_pdf(tmp_path) -> Path:
     return write_empty_pdf(tmp_path / "empty.pdf")
+
+
+@pytest.fixture
+def watermarked_image_pdf(tmp_path) -> Path:
+    """图片型 PDF + 水印文本层：总字符数够多，但正文一个字都没有。"""
+    return write_watermarked_image_pdf(tmp_path / "watermarked_image.pdf")
+
+
+@pytest.fixture
+def avatar_pdf(tmp_path) -> Path:
+    """正常文本简历 + 小头像：不能被误判成扫描件。"""
+    return write_pdf_with_avatar(tmp_path / "avatar.pdf")

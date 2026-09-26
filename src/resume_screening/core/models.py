@@ -79,6 +79,11 @@ class ParseQuality(BaseModel):
     status: ParseStatus = ParseStatus.OK
     page_count: int = 0
     char_count: int = 0
+    # 去掉完全重复的行后的字符数。水印会把 char_count 抬到阈值之上，
+    # 判断"文本层到底有多少信息"要看这个（见 core/quality.py）。
+    unique_char_count: int = 0
+    # 各页中最高的一页图片覆盖率（0–1）。区分"整页是图"与"角落有张头像"。
+    image_coverage: float = 0.0
     cjk_ratio: float = 0.0  # 中文字符占比，用于识别乱码/扫描件
     reasons: list[str] = Field(default_factory=list)
     is_scanned: bool = Field(False, description="是否为扫描件/图片型 PDF（无有效文本层）")

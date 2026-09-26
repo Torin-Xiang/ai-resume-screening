@@ -4,7 +4,8 @@
 1. **纯函数**：文件路径 → ParseResult，不掺评分逻辑、不持有全局状态。
    真实 PDF 版式千变万化，解析器会不断加特例；只有保持纯函数才不会在加特例时失控。
 2. 按坐标块重排：先分栏（左栏 → 右栏），再按行排序，避免分栏简历串栏。
-3. 解析质量自检：扫描件/无文本层 → 标记 needs_manual，**不送入模型**。
+3. 解析质量自检：扫描件 / 图片型 PDF（含只有水印的文本层）→ 标记 needs_manual，
+   **不送入模型**。判据与阈值统一放在 core/quality.py，与"粘贴文本"兜底共用。
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ class PdfPymupdfParser:
         blocks: list[_Block] = []
         pages = 0
         has_images = False
+        image_coverage = 0.0
 
         with fitz.open(p) as doc:
             pages = doc.page_count
@@ -79,10 +81,13 @@ class PdfPymupdfParser:
                     blocks.append(_Block(x0, y0, x1, y1, t, pno + 1))
                 if not has_images and page.get_images(full=False):
                     has_images = True
+                image_coverage = max(image_coverage, self._image_coverage(page))
 
         ordered = self._reorder(blocks)
         raw_text = "\n".join(b.text for b in ordered)
-        quality = assess_text_quality(raw_text, pages=pages, has_images=has_images)
+        quality = assess_text_quality(
+            raw_text, pages=pages, has_images=has_images, image_coverage=image_coverage
+        )
 
         return ParseResult(
             resume_id=resume_id_of(p),
@@ -192,7 +197,34 @@ class PdfPymupdfParser:
         return sorted(blocks, key=lambda b: (b.page, round(b.y0 / tol), b.x0))
 
     # ---------------- 质量自检 ----------------
-    # 实现已移到 core/quality.py：粘贴文本兜底要复用同一套阈值，
+    @staticmethod
+    def _image_coverage(page: object) -> float:
+        """单页图片面积之和 / 版面面积，上限 1.0。
+
+        **为什么不能用 `get_text("blocks")` 的图片块**（实测教训）：
+        真实样本上 `get_text("blocks")` 一个图片块都不返回（`btype` 全是 0），
+        所以上面那个 `btype == 1` 分支在这些文件上是走不到的——
+        `has_images` 实际全靠 `page.get_images()` 兜住。
+        面积还得从 `get_image_info()` 拿 bbox。
+
+        用面积而不是"有没有图片"：**头像照片也是图片**，
+        只判存在性会把正常简历误判成扫描件（见 core/quality.py 的说明）。
+        """
+        rect = getattr(page, "rect", None)
+        area = (rect.width * rect.height) if rect is not None else 0.0
+        if area <= 0:
+            return 0.0
+        covered = 0.0
+        try:
+            infos = page.get_image_info()  # type: ignore[attr-defined]
+        except AttributeError:  # 老版本 PyMuPDF 无此接口 → 退化为"有图即满覆盖"，交由文本层判据兜底
+            return 1.0 if page.get_images(full=False) else 0.0  # type: ignore[attr-defined]
+        for info in infos:
+            r = fitz.Rect(info["bbox"])
+            covered += max(r.width, 0.0) * max(r.height, 0.0)
+        return min(covered / area, 1.0)
+
+    # 阈值与判定逻辑在 core/quality.py：粘贴文本兜底要复用同一套，
     # 放在 core 才能既被适配器用、又不让适配器之间互相依赖。
 
 

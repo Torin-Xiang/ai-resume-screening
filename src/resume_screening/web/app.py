@@ -129,11 +129,27 @@ def create_app(
     return app
 
 
-def run() -> None:  # pragma: no cover - 启动入口，逻辑简单无需单测
+def run_server(app: FastAPI, *, host: str, port: int, log_level: str = "info") -> None:
+    """启动服务。
+
+    单独抽出来是因为 `resume-screen serve` 需要先做端口与前置检查，
+    再拿着准备好的配置把服务拉起来；启动这一步不该有第二份实现。
+    """
     import uvicorn
+
+    uvicorn.run(app, host=host, port=port, log_level=log_level)
+
+
+def run() -> None:  # pragma: no cover - 兼容入口，实际启动走 resume-screen serve
     from dotenv import load_dotenv
 
     load_dotenv()
-    host = os.getenv("HOST", DEFAULT_HOST)
-    port = int(os.getenv("PORT", str(DEFAULT_PORT)))
-    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+    run_server(
+        create_app(),
+        host=os.getenv("HOST", DEFAULT_HOST),
+        port=int(os.getenv("PORT", str(DEFAULT_PORT))),
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    run()

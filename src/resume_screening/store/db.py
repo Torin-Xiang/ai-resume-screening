@@ -3,9 +3,29 @@
 约定：
 1. **短连接**：每次操作开一个新连接，用完即关。SQLite 建连接开销很小，
    这样天然线程安全（后台 worker 线程与请求线程可同时使用），不需要自己加锁。
-2. 建库时开启 WAL，提升读写并发；外键约束打开，保证岗位删除时关联数据一致。
+2. 外键约束打开，保证岗位删除时关联数据一致。
 3. 数据目录由 `APP_DATA_DIR` 决定，默认 `<项目根>/data`——为了将来换机器/部署时
    只搬一个目录（技术方案 §2.2 预留要求）。
+4. **日志模式用 DELETE 而不是 WAL**（实测后改的，见下）。
+
+关于第 4 点——这是本文件最容易被改回去的地方，把依据写清楚：
+
+最初的方案是"短连接 + WAL"，想法是取两者的好处。实测发现这两个选择**互相冲突**：
+WAL 模式依赖 `-wal` / `-shm` 两个附属文件，而短连接在每次关闭时会把它们删掉，
+下一个连接又得重建。本机实测（同一份代码，只换日志模式，各 15 次取中位数）：
+
+| 日志模式 | 短连接下一次"连上 + 读一张表" | 说明 |
+|---|---|---|
+| WAL | **75 ms**（D 盘）/ 112 ms（系统临时目录） | 每次重建 `-shm` |
+| DELETE | **1.4 ms** | 无附属文件 |
+
+如果把某个连接一直握着不放，WAL 会降到 3.9 ms——也就是说慢的不是 WAL 本身，
+而是"WAL + 短连接"这个组合。一次排名请求要读好几张表，75 ms × N 是肉眼可见的卡顿，
+而**速度就是这个产品的生死线**（产品方案 §9：一旦要等，产品就退化回跑批）。
+
+取舍：DELETE 模式下写会短暂阻塞读。本项目已确认是**单机单人**使用（产品方案 §10），
+写入是零星的（上传/改标准），且 `timeout=30.0` 会让并发写入排队而不是报错。
+用 WAL 换来的那点并发，在这个场景里买不到东西，却要每次操作都付一遍重建成本。
 """
 
 from __future__ import annotations
@@ -15,6 +35,9 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Sequence
+
+# 见模块开头第 4 点的实测依据：不要在不改连接策略的情况下换回 WAL。
+JOURNAL_MODE = "DELETE"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -142,7 +165,9 @@ class Database:
     def init_schema(self) -> "Database":
         conn = self.connect()
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
+            # 显式设置而不是沿用默认值：默认值会随发行版变化，而这个选择有实测依据
+            # （见模块开头）。已存在的库也会在这里被转换过来。
+            conn.execute(f"PRAGMA journal_mode={JOURNAL_MODE}")
             conn.executescript(SCHEMA_SQL)
         finally:
             conn.close()

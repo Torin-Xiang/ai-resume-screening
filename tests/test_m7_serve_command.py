@@ -203,7 +203,7 @@ def test_serve_command_is_registered() -> None:
     """`serve` 必须挂在主命令下，否则用户按文档敲就是 "No such command"。"""
     result = CliRunner().invoke(app, ["serve", "--help"])
     assert result.exit_code == 0, result.output
-    for option in ("--host", "--port", "--data-dir", "--concurrency", "--lan"):
+    for option in ("--host", "--port", "--data-dir", "--concurrency", "--lan", "--open"):
         assert option in result.output
 
 
@@ -211,3 +211,69 @@ def test_top_level_help_mentions_serve() -> None:
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
     assert "serve" in result.output
+
+
+# ——————————————————— 自动打开浏览器 ———————————————————
+
+def _free_port() -> int:
+    """向系统要一个当前空闲的端口，避免测试之间互相抢同一个端口。"""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind((DEFAULT_HOST, 0))
+    port: int = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
+class _ImmediateTimer:
+    """把 `threading.Timer` 换成"立刻执行"，免得测试真等一秒。"""
+
+    def __init__(self, interval: float, function, args=None, kwargs=None) -> None:
+        self.function = function
+
+    def start(self) -> None:
+        self.function()
+
+
+def test_open_flag_launches_the_browser(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`--open` 必须真的开浏览器。
+
+    让用户自己从终端里复制网址，正是 v0.1 被否掉的"步骤太多、有使用门槛"。
+    双击启动脚本能不能"点完就见到界面"，全靠这一个参数。
+    """
+    import resume_screening.cli.serve_cmd as serve_cmd
+    import resume_screening.web.app as web_app
+
+    opened: list[str] = []
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
+    monkeypatch.setattr(serve_cmd.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(serve_cmd.threading, "Timer", _ImmediateTimer)
+    monkeypatch.setattr(web_app, "run_server", lambda *a, **k: None)
+
+    port = _free_port()
+    result = CliRunner().invoke(
+        app, ["serve", "--port", str(port), "--data-dir", str(tmp_path), "--open"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert opened == [f"http://127.0.0.1:{port}/"]
+
+
+def test_without_open_flag_nothing_is_launched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """不加 `--open` 就不该开浏览器——脚本化/CI 场景静默启动是前提。"""
+    import resume_screening.cli.serve_cmd as serve_cmd
+    import resume_screening.web.app as web_app
+
+    opened: list[str] = []
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
+    monkeypatch.setattr(serve_cmd.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(serve_cmd.threading, "Timer", _ImmediateTimer)
+    monkeypatch.setattr(web_app, "run_server", lambda *a, **k: None)
+
+    result = CliRunner().invoke(
+        app, ["serve", "--port", str(_free_port()), "--data-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert opened == []

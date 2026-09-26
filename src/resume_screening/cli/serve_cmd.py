@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import os
 import socket
+import threading
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -180,6 +182,9 @@ def serve(
     lan: bool = typer.Option(
         False, "--lan", help="允许同一局域网的其他电脑访问，并打印可复制的链接"
     ),
+    do_open: bool = typer.Option(
+        False, "--open", help="启动后自动用默认浏览器打开工作台"
+    ),
 ) -> None:  # pragma: no cover - 启动入口，纯函数部分已单测
     """启动网页工作台。启动后在浏览器打开提示的地址即可。"""
     from resume_screening.web.app import UI_DIST, create_app, run_server
@@ -220,5 +225,10 @@ def serve(
     if settings.data_dir:
         typer.echo(f"  数据目录：{settings.data_dir}")
     typer.echo("  停止：在本窗口按 Ctrl+C")
+
+    if do_open:
+        typer.echo("  正在打开浏览器…")
+        # 延迟一下再开：uvicorn 真正开始监听之前打开，会吃到"连接被拒"
+        threading.Timer(1.0, lambda: webbrowser.open(settings.url)).start()
 
     run_server(app, host=settings.host, port=settings.port)

@@ -277,3 +277,92 @@ def test_without_open_flag_nothing_is_launched(
 
     assert result.exit_code == 0, result.output
     assert opened == []
+
+
+# ——————————————————— 端口被本工作台占用 ———————————————————
+
+def test_repeated_launch_opens_the_existing_workbench(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """重复双击启动脚本时，该做的是打开已有服务，而不是让用户"换端口"。
+
+    换出来的 8001 上没有他的数据——照着提示去做的人只会更困惑。
+    """
+    import resume_screening.cli.serve_cmd as serve_cmd
+    import resume_screening.web.app as web_app
+
+    opened: list[str] = []
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
+    monkeypatch.setattr(serve_cmd, "is_own_workbench", lambda port: True)
+    monkeypatch.setattr(serve_cmd.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(web_app, "run_server", lambda *a, **k: None)
+
+    occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occupied.bind((DEFAULT_HOST, 0))
+    occupied.listen(1)
+    port = occupied.getsockname()[1]
+    try:
+        result = CliRunner().invoke(app, ["serve", "--port", str(port), "--open"])
+        assert result.exit_code == 0, result.output
+        assert "已经在运行" in result.output
+        assert opened == [f"http://127.0.0.1:{port}/"]
+    finally:
+        occupied.close()
+
+
+def test_port_taken_by_another_program_still_suggests_a_new_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """被别的程序占用才真的要换端口——这个提示只对这种情况成立。"""
+    import resume_screening.cli.serve_cmd as serve_cmd
+    import resume_screening.web.app as web_app
+
+    monkeypatch.setenv("LLM_PROVIDER", "fake")
+    monkeypatch.setattr(serve_cmd, "is_own_workbench", lambda port: False)
+    monkeypatch.setattr(web_app, "run_server", lambda *a, **k: None)
+
+    occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occupied.bind((DEFAULT_HOST, 0))
+    occupied.listen(1)
+    port = occupied.getsockname()[1]
+    try:
+        result = CliRunner().invoke(app, ["serve", "--port", str(port)])
+        assert result.exit_code == 1
+        assert "已被占用" in result.output
+        assert "换一个端口" in result.output
+    finally:
+        occupied.close()
+
+
+def test_is_own_workbench_checks_the_title_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """指纹是"首页 title 是本工作台"——别的程序占了端口不该被误认。"""
+    import io
+
+    import resume_screening.cli.serve_cmd as serve_cmd
+
+    class _FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    own_page = "<html><title>简历初筛工作台</title></html>".encode("utf-8")
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda url, timeout: _FakeResp(own_page),
+    )
+    assert serve_cmd.is_own_workbench(8000) is True
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda url, timeout: _FakeResp(b"<html><title>Other App</title></html>"),
+    )
+    assert serve_cmd.is_own_workbench(8000) is False
+
+
+def test_is_own_workbench_false_when_nothing_listens() -> None:
+    """没有服务在听 → 不是本工作台（这决定要不要走"换端口"提示）。"""
+    import resume_screening.cli.serve_cmd as serve_cmd
+
+    assert serve_cmd.is_own_workbench(_free_port()) is False

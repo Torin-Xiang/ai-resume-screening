@@ -109,6 +109,28 @@ def ensure_port_free(host: str, port: int) -> None:
         sock.close()
 
 
+#: 本工作台首页的指纹。端口被占时先看对方是谁：
+#: 是自己 → 用户只是重复双击了启动脚本，该做的是打开已有服务；
+#: 是别的程序 → 这才轮到"换端口"。
+_WORKBENCH_TITLE = "<title>简历初筛工作台</title>"
+
+
+def is_own_workbench(port: int, timeout: float = 1.5) -> bool:
+    """`port` 上跑的是不是本工作台：认首页 title 指纹，不认进程名。
+
+    不用进程名是因为"哪个进程占的"这个信息在 Windows 上要拿 PID 再查，
+    而 HTTP 指纹一行就能确认，还不依赖平台。
+    """
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=timeout) as resp:
+            head = resp.read(4096).decode("utf-8", errors="ignore")
+    except OSError:  # 没有服务在听 / 不是 HTTP / 连不上
+        return False
+    return _WORKBENCH_TITLE in head
+
+
 def preflight_warnings(ui_dist: Path | None = None) -> list[str]:
     """返回"能启动但看着不对"的提醒。
 
@@ -195,13 +217,23 @@ def serve(
 
     try:
         ensure_port_free(settings.host, settings.port)
-    except PortInUse as exc:
-        typer.secho(f"✗ {exc}", fg=typer.colors.RED, err=True)
+    except PortInUse:
+        if is_own_workbench(settings.port):
+            # 用户重复双击了启动脚本。此时该做的是把已有的服务带到他面前，
+            # 而不是让他去"换端口"——换出来的 8001 上没有他的数据，纯属误导。
+            typer.secho("✓ 工作台已经在运行，不用再启动一次", fg=typer.colors.GREEN)
+            typer.echo(f"  地址：{settings.url}")
+            typer.echo("  （想彻底重启：先关掉原来那个黑色窗口，再双击一次启动脚本）")
+            if do_open:
+                webbrowser.open(settings.url)
+            raise typer.Exit(code=0) from None
+        # 被别的程序占着：这才是真正需要换端口的情况
+        typer.secho(f"✗ {settings.host}:{settings.port} 已被占用", fg=typer.colors.RED, err=True)
         typer.echo(
             f"  换一个端口重试，例如：resume-screen serve --port {settings.port + 1}",
             err=True,
         )
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=1) from None
 
     # 启动前把"起不来"的原因说清楚，别等 uvicorn 把堆栈甩出来
     if missing_api_key():

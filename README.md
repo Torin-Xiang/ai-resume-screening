@@ -51,8 +51,20 @@ cp .env.example .env      # 填入 DASHSCOPE_API_KEY
 这个脚本不联网、不需要 key，自建一个岗位 + 一份标准并灌入三份合成简历，
 刻意让结果落满三个分组（推荐 / 待确认 / 不推荐）——空界面看不出问题的所在。
 
+想看**真实简历**在完整链路上的形态（同样不联网、不花钱）：
+
+```bash
+LLM_PROVIDER=scripted resume-screen serve
+```
+
+`scripted` 是内置的规则驱动离线通道：字段从简历原文里按结构抽取、每条结论都带**真实原文引用**，
+但判定逻辑是关键词规则，**不代表真实模型的准确率**。它的用途只有一个——
+在还没配密钥时把「上传 → 解析 → 抽取 → 排名 → 改标准」整条链路和界面形态看完整。
+要真实分数与排名，必须配真密钥。
+
 > 不要用 `LLM_PROVIDER=fake` 来"看界面"：那个通道对任何 prompt 都返回空对象，
 > 结果是所有字段"未提取"、所有人落进待确认。流程跑通了，但什么都没验证到。
+> 现在这一步应该用 `scripted`。
 
 ### 4. 启动
 
@@ -115,20 +127,52 @@ resume-screen serve --lan
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
-| `DASHSCOPE_API_KEY` | 通义千问 API key（**缺失会明确报错，不会猜测**） | — |
-| `LLM_PROVIDER` | `qwen` / `fake`（fake 仅供离线演练） | `qwen` |
-| `LLM_MODEL` | 模型名 | `qwen-plus` |
-| `DASHSCOPE_BASE_URL` | 兼容端点 | DashScope 官方兼容端点 |
+| `LLM_PROVIDER` | `qwen` / `deepseek` / `openai` / `scripted` / `fake`（后两者离线，见下） | 按下面的顺序推断 |
+| `DASHSCOPE_API_KEY` | qwen 通道的 API key（**缺失会明确报错，不会猜测**） | — |
+| `LLM_API_KEY` | `deepseek` / `openai` 等通用兼容通道的 API key | — |
+| `LLM_BASE_URL` | 通用通道的兼容端点，如 `https://api.deepseek.com/v1` | 按 provider |
+| `LLM_MODEL` | 模型名（**必须与该账户实际可用列表一致**，写错会 400/404） | 按 provider |
+| `DASHSCOPE_BASE_URL` | qwen 通道的兼容端点 | DashScope 官方兼容端点 |
 | `HOST` / `PORT` | `serve` 的默认监听地址与端口 | `127.0.0.1` / `8000` |
 | `APP_DATA_DIR` | 数据目录 | 项目下 `data/` |
 | `SCREEN_CONCURRENCY` | 并发处理份数 | `5` |
+
+**provider 怎么定的**（顺序不可乱）：
+
+1. 命令行 `--provider` 显式指定；
+2. 否则看 `LLM_PROVIDER`；
+3. 否则按 `LLM_BASE_URL` / `LLM_API_KEY` 是否存在**推断**（有就是通用通道，没有就是 `qwen`）；
+4. 都没有则默认 `qwen`。
+
+**两个通道的密钥刻意不互相回退**：`qwen` 只认 `DASHSCOPE_API_KEY`，
+`deepseek`/`openai` 只认 `LLM_API_KEY`。这不是疏漏——
+如果通用通道能回退到 `DASHSCOPE_API_KEY`，那么把 `LLM_BASE_URL` 指向任意第三方端点时，
+阿里云的密钥就会被发到那个端点去。**配错就该报错，不该猜。**
+
+想先确认配置对不对、又不想花一分钱：
+
+```bash
+.venv/Scripts/python.exe scripts/check_llm_env.py
+```
+
+它只读配置、不发请求，密钥打码输出，能直接告诉你"读到没读到、provider 解析成了谁"。
 
 ---
 
 ## 开发
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q     # 220 passed
+.venv/Scripts/python.exe -m pytest -q --keep-duplicates    # 259 passed
+```
+
+> 跑测试建议带上 `--keep-duplicates`：默认的批量删除行为在某些环境下会触发风控拦截，
+> 表现为测试莫名失败，加这个参数即可规避。
+
+跑完一次筛选想复盘（排名 / 9 字段 / token / 字段准确率）：
+
+```bash
+.venv/Scripts/python.exe scripts/report_run.py --run data/runs/<run_id>/run.json
+# 有手工核对基准时可加 --truth data/m2_truth.json，会额外打印字段准确率
 ```
 
 分层约定（改动前请读）：CLI 薄壳 → `services/`（业务编排）→ `core/`（纯逻辑，**不认识
